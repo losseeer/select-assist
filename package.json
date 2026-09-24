@@ -1,0 +1,19 @@
+{
+  "name": "select-assist",
+  "private": true,
+  "version": "0.1.0",
+  "description": "select-assist: capture a selection near any agent UI, pack it (optionally with session context) and ask another model without polluting the original session",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "panel": "pnpm --filter @select-assist/panel start"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "pnpm": { "onlyBuiltDependencies": ["electron"] },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@types/node": "^24.0.0"
+  }
+}

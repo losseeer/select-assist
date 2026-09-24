@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>select-assist</title>
+  <link rel="stylesheet" href="style.css" />
+  <script>
+    // set mode before first paint to avoid flash
+    document.documentElement.dataset.mode = location.hash === '#panel' ? 'panel' : 'chip';
+  </script>
+</head>
+<body>
+  <!-- ======== chip window (focusable:false, non-activating) ======== -->
+  <div id="chip">
+    <button id="dot" title="展开面板">●</button>
+    <button id="chip-capture">取入选区</button>
+    <span id="chip-badge" class="hidden">有新复制</span>
+  </div>
+
+  <!-- ======== panel window (focusable, shown/hidden) ======== -->
+  <div id="panel">
+    <div id="panel-head">
+      <span id="collapse" title="折叠">▾</span>
+      <span class="title">select-assist</span>
+      <button id="head-capture" title="把刚才 ⌘C 的内容取进来">取入选区</button>
+      <span id="quit" title="退出常驻">✕</span>
+    </div>
+
+    <section id="summary">
+      <div id="summary-empty">还没有选区：在源界面 ⌘C 后点右上「取入选区」</div>
+      <div id="summary-body" class="hidden">
+        <div id="sum-first"></div>
+        <div id="sum-meta"></div>
+        <div id="sum-session"></div>
+      </div>
+    </section>
+
+    <section id="ctx-row">
+      <label><input type="checkbox" id="with-ctx" /> 附带会话上下文</label>
+      <select id="ctx-agent">
+        <option value="auto">自动判定</option>
+        <option value="claude-code">Claude Code</option>
+        <option value="codex">Codex</option>
+        <option value="workbuddy">WorkBuddy</option>
+        <option value="qoder">Qoder</option>
+      </select>
+      <select id="ctx-turns">
+        <option>4</option><option selected>8</option><option>16</option><option>30</option>
+      </select>
+      <span>轮</span>
+      <button id="ctx-refresh" class="hidden">刷新上下文</button>
+      <button id="ctx-browse" class="hidden">浏览会话</button>
+    </section>
+    <div id="ctx-status"></div>
+
+    <section id="browser" class="hidden">
+      <div id="browser-tip">按最近修改排序；点一条即用它填充上下文</div>
+      <div id="browser-list"></div>
+    </section>
+
+    <section id="actions">
+      <button id="copy" class="primary">复制 Prompt</button>
+      <span id="sites"></span>
+    </section>
+    <div id="pack-meta"></div>
+
+    <details id="settings">
+      <summary>设置</summary>
+      <label>提问指令（<code>{selection}</code> 会被替换为选区原文）
+        <textarea id="set-prompt" rows="3"></textarea>
+      </label>
+      <label>项目路径（判定会话用，可留空靠浏览选择）<input id="set-project" placeholder="/Users/x/prj" /></label>
+      <label>字符上限 <input id="set-max" type="number" min="500" step="500" /></label>
+      <label><input id="set-redact" type="checkbox" /> 路径脱敏（复制时家目录写作 ~）</label>
+      <label>目标站（每行一条：名称|URL）</label>
+      <textarea id="set-sites" rows="3"></textarea>
+      <button id="set-save">保存设置</button>
+    </details>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
