@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPack, validatePack, render, redactPaths } from '../dist/index.js';
+import { buildPack, validatePack, render, redactPaths, assemblePrompt } from '../dist/index.js';
 
 const capture = { via: 'clipboard', at: '2026-09-24T10:12:01Z' };
 
@@ -116,4 +116,47 @@ test('redactPaths hides home dir in payload and source', () => {
   const r = redactPaths(pack);
   assert.ok(!r.payload.includes(process.env.HOME));
   assert.equal(r.source.projectPath, '~/secret');
+});
+
+// ---------- assemblePrompt: whole-prompt budget ----------
+const TPL = '解释选中的词：「{selection}」';
+test('assemble: fits within budget untouched', () => {
+  const r = assemblePrompt({ template: TPL, selection: '水', context: '用户> a\n\n助手> b', maxChars: 8000 });
+  assert.equal(r.prompt, '解释选中的词：「水」\n\n用户> a\n\n助手> b');
+  assert.deepEqual(r.dropped, []);
+});
+
+test('assemble: no context keeps instruction only', () => {
+  const r = assemblePrompt({ template: TPL, selection: '水', context: '', maxChars: 8000 });
+  assert.equal(r.prompt, '解释选中的词：「水」');
+});
+
+test('assemble: template without placeholder appends selection', () => {
+  const r = assemblePrompt({ template: '看看这个', selection: '水', context: '', maxChars: 8000 });
+  assert.equal(r.prompt, '看看这个\n\n水');
+});
+
+test('assemble: oldest context turns trimmed before selection', () => {
+  const context = ['用户> ' + 'x'.repeat(60), '助手> ' + 'y'.repeat(60), '助手> 最新一轮'].join('\n\n');
+  const r = assemblePrompt({ template: TPL, selection: '关键词', context, maxChars: 120 });
+  assert.ok(r.dropped.includes('context:trimmed-oldest'));
+  assert.ok(r.prompt.includes('最新一轮'), 'newest turn survives');
+  assert.ok(!r.prompt.includes('xxx'), 'oldest turn gone');
+  assert.ok(r.prompt.includes('关键词'), 'selection kept intact');
+  assert.ok(r.prompt.length <= 120);
+});
+
+test('assemble: selection truncated with visible ellipsis when context alone is big', () => {
+  const bigSel = 'S'.repeat(5000);
+  const r = assemblePrompt({ template: TPL, selection: bigSel, context: '助手> ' + 'c'.repeat(300), maxChars: 800 });
+  assert.ok(r.dropped.includes('selection:truncated'));
+  assert.ok(r.prompt.includes('S…'), 'truncated selection carries the ellipsis');
+  assert.ok(r.prompt.length <= 800);
+  assert.ok(r.prompt.includes('助手> c'), 'context retained over selection tail');
+});
+
+test('assemble: degenerate budget still hard-capped', () => {
+  const r = assemblePrompt({ template: TPL, selection: 'z'.repeat(500), context: 't'.repeat(500), maxChars: 40 });
+  assert.ok(r.prompt.length <= 40);
+  assert.ok(r.dropped.length > 0, 'never silent');
 });

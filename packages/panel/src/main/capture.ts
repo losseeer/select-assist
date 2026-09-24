@@ -1,4 +1,5 @@
 import {
+  assemblePrompt,
   buildPack,
   pickSession,
   render,
@@ -192,8 +193,8 @@ export class Capturer {
   }
 
   /**
-   * Assembled prompt = instruction line (selection quoted) + clean context pack.
-   * Without transcript the instruction already carries the selection — no duplication.
+   * Assembled prompt = instruction line (selection quoted) + clean context pack,
+   * hard-capped at settings.maxChars as a whole (see ctxpack assemblePrompt).
    */
   currentPayload(settings: Settings):
     | { prompt: string; context: string; usedChars: number; dropped: string[] }
@@ -204,18 +205,18 @@ export class Capturer {
       pack = redactPaths({ ...pack });
       pack.payload = render(pack, PACK_TEMPLATE, pack.limits?.dropped ?? []);
     }
-    const context = pack.payload ?? '';
-    const selection = pack.selection?.text ?? '';
-    const tpl = settings.promptTemplate.includes('{selection}')
-      ? settings.promptTemplate
-      : `${settings.promptTemplate}\n\n{selection}`;
-    const instruction = tpl.split('{selection}').join(selection);
-    const prompt = pack.transcript?.length ? `${instruction}\n\n${context}` : instruction;
+    const context = pack.transcript?.length ? (pack.payload ?? '') : '';
+    const { prompt, dropped } = assemblePrompt({
+      template: settings.promptTemplate,
+      selection: pack.selection?.text ?? '',
+      context,
+      maxChars: settings.maxChars,
+    });
     return {
       prompt,
       context,
       usedChars: prompt.length,
-      dropped: pack.limits?.dropped ?? [],
+      dropped: [...(pack.limits?.dropped ?? []), ...dropped],
     };
   }
 

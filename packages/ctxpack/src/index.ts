@@ -3,6 +3,7 @@ export { buildPack, DEFAULT_MAX_CHARS, type BuildInput } from './build.js';
 export { render, registerTemplate, listTemplates, type Template } from './render.js';
 export { validatePack, type ValidationResult } from './validate.js';
 export { redactPaths } from './redact.js';
+export { assemblePrompt, type AssembleInput, type Assembled } from './prompt.js';
 export type { SessionRef, TrackBAdapter, TranscriptResult } from './adapters/types.js';
 export { claudeCodeAdapter } from './adapters/claude-code.js';
 export { codexAdapter } from './adapters/codex.js';
