@@ -29,19 +29,26 @@ button.primary:hover { filter: brightness(1.1); }
 html[data-mode="chip"] #panel { display: none; }
 html[data-mode="panel"] #chip { display: none; }
 
-/* ---------- chip ---------- */
+/* ---------- chip: the collapsed title bar of the same "virtual" window ---------- */
 html[data-mode="chip"] body { height: 100vh; }
 #chip {
   display: flex; align-items: center; gap: 8px; height: 100vh;
   padding: 8px 12px; background: var(--bg);
-  border: 1px solid var(--line); border-radius: 26px;
+  border: 1px solid var(--line); border-radius: 14px;
+  -webkit-app-region: drag;
 }
+#chip .title { flex: 1; color: var(--dim); font-size: 12px; }
 #dot {
-  width: 30px; height: 30px; border-radius: 50%; border: none;
-  background: #23232a; color: var(--accent); font-size: 12px; flex: none;
+  cursor: pointer; color: var(--dim); font-size: 12px; flex: none;
+  -webkit-app-region: no-drag;
 }
+#dot:hover { color: var(--fg); }
 #chip-badge { color: var(--warn); font-size: 11px; white-space: nowrap; }
-#chip-capture.busy { opacity: .6; }
+#chip-capture, #head-capture {
+  -webkit-app-region: no-drag; font-size: 11px; padding: 2px 10px;
+  border-radius: 10px; background: #23232a;
+}
+#chip-capture.busy, #head-capture.busy { opacity: .6; }
 
 /* ---------- panel ---------- */
 html[data-mode="panel"] body { height: 100vh; }
@@ -57,11 +64,6 @@ html[data-mode="panel"] body { height: 100vh; }
 #panel-head .title { flex: 1; color: var(--dim); font-size: 12px; }
 #collapse, #quit { cursor: pointer; color: var(--dim); -webkit-app-region: no-drag; }
 #collapse:hover, #quit:hover { color: var(--fg); }
-#head-capture {
-  -webkit-app-region: no-drag; font-size: 11px; padding: 2px 10px;
-  border-radius: 10px; background: #23232a;
-}
-#head-capture.busy { opacity: .6; }
 
 section { border-top: 1px solid var(--line); padding-top: 6px; }
 #summary-body { display: flex; flex-direction: column; gap: 1px; }

@@ -10,11 +10,12 @@
   </script>
 </head>
 <body>
-  <!-- ======== chip window (focusable:false, non-activating) ======== -->
+  <!-- ======== chip window = collapsed title bar (focusable:false, non-activating) ======== -->
   <div id="chip">
-    <button id="dot" title="展开面板">●</button>
-    <button id="chip-capture">取入选区</button>
+    <span id="dot" title="展开面板">▸</span>
+    <span class="title">select-assist</span>
     <span id="chip-badge" class="hidden">有新复制</span>
+    <button id="chip-capture" title="把刚才 ⌘C 的内容取进来">取入选区</button>
   </div>
 
   <!-- ======== panel window (focusable, shown/hidden) ======== -->

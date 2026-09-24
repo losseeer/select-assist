@@ -6,7 +6,7 @@ import { Capturer } from './capture.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const CHIP = { width: 300, height: 56 };
+const CHIP = { width: 400, height: 44 }; // same width as PANEL: expand/collapse is a pure height change
 const PANEL = { width: 400, height: 350 };
 
 if (!app.requestSingleInstanceLock()) {
