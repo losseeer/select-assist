@@ -26,8 +26,18 @@ let clipUnread: ClipNote | null = null;
 
 function notifyClip(): void {
   // always (re)send, including null — that is how a cleared state reaches visible windows
-  if (!chipWin.isDestroyed() && chipWin.isVisible()) chipWin.webContents.send('clipboard:new', clipUnread);
-  if (!panelWin.isDestroyed() && panelWin.isVisible()) panelWin.webContents.send('clipboard:new', clipUnread);
+  safeSend(chipWin, 'clipboard:new', clipUnread);
+  safeSend(panelWin, 'clipboard:new', clipUnread);
+}
+
+// a send racing a reload/teardown throws "Render frame was disposed"; an uncaught
+// throw inside the clipboard poll interval would crash the whole app
+function safeSend(w: BrowserWindow | undefined, channel: string, ...args: unknown[]): void {
+  try {
+    if (w && !w.isDestroyed() && w.isVisible()) w.webContents.send(channel, ...args);
+  } catch {
+    /* window vanished mid-send; state replays on next expand/collapse */
+  }
 }
 
 /**
@@ -53,10 +63,13 @@ function topMost(w: BrowserWindow): void {
 function defaultChipPos(): { x: number; y: number } {
   const s = settings.get();
   const area = screen.getPrimaryDisplay().workArea;
-  return {
+  const raw = {
     x: s.windowX ?? area.x + area.width - CHIP.width - 16,
     y: s.windowY ?? area.y + 60,
   };
+  // a saved position on a now-disconnected display must not park the chip offscreen forever
+  const clamped = clampToDisplay({ ...raw, width: CHIP.width, height: CHIP.height });
+  return { x: clamped.x, y: clamped.y };
 }
 
 function createWindows(): void {
@@ -105,8 +118,10 @@ function createWindows(): void {
   panelWin.loadFile(path.join(__dirname, '../../static/index.html'), { hash: 'panel' });
   topMost(panelWin);
   panelWin.on('close', () => {
+    // store the raw position; clampToDisplay() at startup keeps it on-screen
+    // (Math.min against workArea.width here would break negative-x secondary displays)
     const b = chipWin.isVisible() ? chipWin.getBounds() : panelWin.getBounds();
-    settings.patch({ windowX: Math.min(b.x, screen.getDisplayNearestPoint(b).workArea.width), windowY: b.y });
+    settings.patch({ windowX: b.x, windowY: b.y });
   });
 }
 
@@ -129,8 +144,8 @@ function expand(): void {
   );
   chipWin.hide();
   panelWin.showInactive();
-  panelWin.webContents.send('win:shown');
-  notifyClip();
+  safeSend(panelWin, 'win:shown'); // refresh status line from main
+  notifyClip(); // then replay the unread-clipboard badge
 }
 
 function collapse(): void {
@@ -140,7 +155,7 @@ function collapse(): void {
   );
   panelWin.hide();
   chipWin.showInactive();
-  chipWin.webContents.send('win:shown'); // chip status line refreshes like the panel does
+  safeSend(chipWin, 'win:shown'); // chip status line refreshes like the panel does
   notifyClip();
   const b = chipWin.getBounds();
   settings.patch({ windowX: b.x, windowY: b.y });
@@ -161,14 +176,23 @@ function wireIpc(): void {
   );
   ipcMain.handle('capture:clearContext', () => capturer.clearContext());
   ipcMain.handle('pack:current', () => capturer.currentPayload(settings.get()) ?? null);
-  ipcMain.handle('pack:copy', () => capturer.copyToClipboard(settings.get()));
+  ipcMain.handle('pack:copy', () => {
+    const ok = capturer.copyToClipboard(settings.get());
+    // our own write must not look like a fresh user copy to the watcher (would light the unread dot)
+    if (ok) lastClip = clipboard.readText();
+    return ok;
+  });
   ipcMain.handle('sessions:browse', () => capturer.browse());
 
   ipcMain.handle('site:open', (_e, url: string) => {
-    const u = new URL(url);
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
-    void shell.openExternal(url);
-    return true;
+    try {
+      const u = new URL(String(url));
+      if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+      void shell.openExternal(url);
+      return true;
+    } catch {
+      return false;
+    }
   });
 
   ipcMain.handle('settings:get', () => settings.get());

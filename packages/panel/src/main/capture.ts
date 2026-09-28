@@ -87,8 +87,10 @@ export class Capturer {
     const summary: SelectionSummary = text.trim()
       ? (() => {
           const at = new Date().toISOString();
+          // buildPack requires a non-empty selection.text: store the trimmed copy
+          // so a whitespace-only clipboard (e.g. a lone ⌘C on a blank line) cannot throw.
           this.pack = buildPack({
-            selection: { text, role: 'unknown' },
+            selection: { text: text.trim(), role: 'unknown' },
             capture: { via: 'clipboard', at },
             source: { app: 'desktop' },
             maxChars: NO_BUDGET,
@@ -243,6 +245,8 @@ export class Capturer {
       pack = redactPaths({ ...pack });
       pack.payload = render(pack, PACK_TEMPLATE, pack.limits?.dropped ?? []);
     }
+    // clean/v1 renders selection-only packs AS the selection text — using it as
+    // context here would duplicate the selection inside the assembled prompt.
     const context = pack.transcript?.length ? (pack.payload ?? '') : '';
     const { prompt, dropped } = assemblePrompt({
       template: settings.promptTemplate,

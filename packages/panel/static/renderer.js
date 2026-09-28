@@ -188,6 +188,10 @@ if (MODE === 'panel') {
     lastCtx = s.context;
     renderSessionLine();
     refreshPackMeta();
+    // a new capture resets the pack — re-fill context when the switch is on
+    if (s.selection?.ok && $('with-ctx').checked && !s.context.agent && !s.context.error) {
+      await refreshContext();
+    }
   }
   api.onWinShown(async () => {
     // replay entrance animation on every expand (window show does not reload the page)
@@ -209,10 +213,12 @@ if (MODE === 'panel') {
   }
 
   // ---------- context ----------
+  let ctxSeq = 0; // last-write-wins guard: a slow attach must not clobber a newer one
   $('with-ctx').addEventListener('change', async (e) => {
     // visibility (not display): the button row keeps its slot so the layout never jumps
     $('ctx-actions').classList.toggle('off', !e.target.checked);
     if (!e.target.checked) {
+      ctxSeq++; // invalidate any in-flight attach so it cannot repopulate after clearing
       $('browser').classList.add('hidden');
       lastCtx = null;
       browsing = null;
@@ -227,6 +233,7 @@ if (MODE === 'panel') {
 
   async function refreshContext() {
     if (!$('with-ctx').checked) return;
+    const seq = ++ctxSeq;
     flashStatus('正在填充上下文…');
     const r = await api.attachContext({
       agent: browsing ? browsing.agent : $('ctx-agent').value,
@@ -234,6 +241,7 @@ if (MODE === 'panel') {
       filePath: browsing?.filePath,
       sessionId: browsing?.sessionId,
     });
+    if (seq !== ctxSeq) return; // a newer refresh already owns the state
     lastCtx = r;
     flashStatus(r.error ?? '', !!r.error);
     renderSessionLine();
@@ -247,7 +255,17 @@ if (MODE === 'panel') {
     sec.classList.remove('hidden');
     const wrap = $('browser-list');
     wrap.innerHTML = '<div class="br-loading">正在发现会话…</div>';
-    const list = await api.browseSessions();
+    let list = [];
+    try {
+      list = await api.browseSessions();
+    } catch (e) {
+      wrap.innerHTML = '';
+      const div = document.createElement('div');
+      div.className = 'br-loading';
+      div.textContent = `会话发现失败：${e.message ?? e}`;
+      wrap.appendChild(div);
+      return;
+    }
     wrap.innerHTML = '';
     if (list.length === 0) {
       wrap.innerHTML = '<div class="br-item"><span class="pv">未发现任何可解析的会话（Trae 数据库加密暂不支持）</span></div>';
