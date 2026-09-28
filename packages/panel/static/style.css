@@ -18,11 +18,12 @@ body {
 button, select, input, textarea { font: inherit; color: inherit; }
 button {
   background: transparent; border: 1px solid var(--line); border-radius: 8px;
-  padding: 3px 10px; cursor: pointer; color: var(--fg);
+  padding: 4px 10px; cursor: pointer; color: var(--fg);
 }
 button:hover { background: rgba(255, 255, 255, 0.07); border-color: #4d4d57; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button.primary:hover { filter: brightness(1.1); }
+:focus-visible { outline: 1px solid var(--dim); outline-offset: 2px; }
 select {
   background: transparent; border: 1px solid var(--line); border-radius: 6px;
   padding: 1px 4px; cursor: pointer;
@@ -40,17 +41,31 @@ html[data-mode="chip"] body { height: 100vh; }
   border: 1px solid var(--line); border-radius: 10px;
   -webkit-app-region: drag;
 }
-#chip .title { flex: 1; color: var(--dim); font-size: 12px; }
+#chip .title {
+  flex: 1; color: var(--dim); font-size: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 #dot {
   cursor: pointer; color: var(--dim); font-size: 12px; flex: none;
   -webkit-app-region: no-drag;
 }
 #dot:hover { color: var(--fg); }
-#chip-badge { color: var(--accent); font-size: 12px; white-space: nowrap; }
+/* notification dot: fixed footprint, no layout shift when it lights up */
+#chip-badge {
+  flex: none; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); opacity: 0; transition: opacity 0.18s;
+}
+#chip-badge.on { opacity: 1; }
 #chip-capture, #head-capture {
-  -webkit-app-region: no-drag; font-size: 12px; padding: 1px 10px;
+  -webkit-app-region: no-drag; font-size: 12px; padding: 3px 12px;
 }
 #chip-capture.busy, #head-capture.busy { opacity: .6; }
+/* same unread-copy dot on the panel's capture button (the chip is hidden while the panel is open) */
+#head-capture { position: relative; }
+#head-capture.newclip::after {
+  content: ''; position: absolute; top: -3px; right: -3px;
+  width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+}
 
 /* ---------- panel ---------- */
 html[data-mode="panel"] body { height: 100vh; }
@@ -74,7 +89,7 @@ html[data-mode="panel"] body { height: 100vh; }
 
 #ctx-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
 #ctx-row select { color: var(--fg); }
-#ctx-row button { font-size: 12px; padding: 1px 8px; }
+#ctx-row button { font-size: 12px; padding: 4px 10px; }
 #ctx-status { font-size: 12px; color: var(--dim); min-height: 18px; }
 #ctx-status.err { color: var(--warn); }
 
@@ -93,11 +108,15 @@ html[data-mode="panel"] body { height: 100vh; }
 .br-item .mt { color: var(--dim); flex: none; }
 .br-item .pv { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+.br-item:focus-visible { outline: 1px solid var(--dim); outline-offset: 1px; }
+.br-loading { color: var(--dim); font-size: 12px; padding: 6px 2px; }
+#browser-path { color: var(--dim); font-size: 12px; word-break: break-all; }
+
 #actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 #sites { display: flex; gap: 6px; flex-wrap: wrap; }
-#sites button { font-size: 12px; padding: 1px 8px; }
-#copy { padding: 3px 14px; }
-#copy.done { background: var(--accent); border-color: var(--accent); color: #fff; }
+#sites button { font-size: 12px; padding: 4px 10px; }
+#copy { padding: 5px 14px; transition: filter 0.15s, transform 0.15s; }
+#copy.done { filter: brightness(1.2); transform: scale(1.04); }
 
 #pack-meta { color: var(--dim); font-size: 12px; }
 #set-sites, #set-prompt {
@@ -109,6 +128,8 @@ html[data-mode="panel"] body { height: 100vh; }
 #settings { font-size: 12px; }
 #settings summary { cursor: pointer; color: var(--dim); }
 #settings label { display: block; margin: 6px 0 2px; }
+#settings .hint { color: var(--dim); margin: 6px 0; }
+#set-save.dirty::after { content: '●'; margin-left: 6px; color: var(--warn); font-size: 10px; vertical-align: 1px; }
 #settings input[type="text"], #settings input[type="number"], #settings input:not([type]) {
   background: rgba(0, 0, 0, 0.25); border: 1px solid var(--line); border-radius: 6px;
   padding: 3px 6px; width: 100%;

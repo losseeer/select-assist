@@ -31,6 +31,16 @@ function rangeLabel(from: number, to: number): string {
   return from === to ? `turns:${from}` : `turns:${from}-${to}`;
 }
 
+/** breadth-first caps: trim every turn's text before dropping whole turns */
+const TURN_CAPS = [2000, 1000, 500, 250, 120];
+
+function capTurn(t: TranscriptTurn, cap: number): TranscriptTurn {
+  if (t.text.length <= cap) return t;
+  const head = Math.ceil((cap - 1) / 2);
+  const tail = Math.floor((cap - 1) / 2);
+  return { ...t, text: t.text.slice(0, head) + '…' + t.text.slice(t.text.length - tail) };
+}
+
 /**
  * Never truncate silently: every omission is recorded in limits.dropped
  * and rendered visibly in the payload.
@@ -52,10 +62,23 @@ export function buildPack(input: BuildInput): CtxPack {
 
   const numbered: TranscriptTurn[] = transcript.map((t, i) => ({ ...t, seq: t.seq ?? i }));
 
-  // Try dropping turns from the oldest (index 0..dropFrom-1) until payload fits.
-  for (let dropFrom = 0; dropFrom <= numbered.length; dropFrom++) {
-    const kept = numbered.slice(dropFrom);
+  // Fit order: keep every requested turn (uncapped, then each shorter cap) before
+  // dropping whole turns; among dropped-turn variants, uncapped full-text first.
+  // Every omission is recorded — never silent.
+  const maxTurnLen = numbered.reduce((m, t) => Math.max(m, t.text.length), 0);
+  const caps = TURN_CAPS.filter((c) => c < maxTurnLen);
+  const attempts: { cap: number; dropFrom: number }[] = [{ cap: 0, dropFrom: 0 }];
+  for (const cap of caps) attempts.push({ cap, dropFrom: 0 });
+  // dropFrom < length: never return an empty transcript while any non-empty variant fits
+  for (let dropFrom = 1; dropFrom < numbered.length; dropFrom++) attempts.push({ cap: 0, dropFrom });
+  for (const cap of caps)
+    for (let dropFrom = 1; dropFrom < numbered.length; dropFrom++) attempts.push({ cap, dropFrom });
+
+  for (const { cap, dropFrom } of attempts) {
+    const turns = cap ? numbered.map((t) => capTurn(t, cap)) : numbered;
+    const kept = turns.slice(dropFrom);
     const dropped = defaultDropped.slice();
+    if (cap) dropped.push(`turns:capped-${cap}`);
     if (dropFrom > 0) dropped.push(rangeLabel(0, dropFrom - 1));
     const draft: CtxPack = {
       pack: PACK_FORMAT,

@@ -7,7 +7,7 @@ import { Capturer } from './capture.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const CHIP = { width: 400, height: 44 }; // same width as PANEL: expand/collapse is a pure height change
-const PANEL = { width: 400, height: 350 };
+const PANEL = { width: 400, height: 350 }; // height is the default; autoHeight() adapts it to content
 
 if (!app.requestSingleInstanceLock()) {
   console.error('select-assist panel: 已有一个实例在运行（可能藏在屏幕角落的圆点），本次启动退出。如窗口不可见可执行 pkill -f "select-assist.*Electron" 后重试。');
@@ -19,6 +19,16 @@ let capturer: Capturer;
 let chipWin: BrowserWindow;
 let panelWin: BrowserWindow;
 let lastClip = '';
+let panelHeight = PANEL.height;
+// unread copy survives expand/collapse: a copy made while the chip is hidden must still light it up later
+interface ClipNote { chars: number; firstLine: string }
+let clipUnread: ClipNote | null = null;
+
+function notifyClip(): void {
+  // always (re)send, including null — that is how a cleared state reaches visible windows
+  if (!chipWin.isDestroyed() && chipWin.isVisible()) chipWin.webContents.send('clipboard:new', clipUnread);
+  if (!panelWin.isDestroyed() && panelWin.isVisible()) panelWin.webContents.send('clipboard:new', clipUnread);
+}
 
 /**
  * Two windows instead of resizing one: the chip stays focusable:false
@@ -113,11 +123,12 @@ function expand(): void {
   const c = chipWin.getBounds();
   // keep the right edge anchored so the panel grows leftwards from the chip
   panelWin.setBounds(
-    clampToDisplay({ x: c.x + CHIP.width - PANEL.width, y: c.y, width: PANEL.width, height: PANEL.height }),
+    clampToDisplay({ x: c.x + CHIP.width - PANEL.width, y: c.y, width: PANEL.width, height: panelHeight }),
   );
   chipWin.hide();
   panelWin.showInactive();
   panelWin.webContents.send('win:shown');
+  notifyClip();
 }
 
 function collapse(): void {
@@ -127,15 +138,23 @@ function collapse(): void {
   );
   panelWin.hide();
   chipWin.showInactive();
+  notifyClip();
   const b = chipWin.getBounds();
   settings.patch({ windowX: b.x, windowY: b.y });
 }
 
 function wireIpc(): void {
-  ipcMain.handle('capture:selection', () => capturer.captureFromClipboard(settings.get()));
+  ipcMain.handle('capture:selection', async () => {
+    const r = await capturer.captureFromClipboard();
+    if (r.ok) clipUnread = null;
+    notifyClip();
+    return r;
+  });
   ipcMain.handle('capture:summary', () => capturer.summary());
-  ipcMain.handle('capture:context', (_e, opts: { agent: string; turns: number; filePath?: string }) =>
-    capturer.attachContext(settings.get(), opts),
+  ipcMain.handle(
+    'capture:context',
+    (_e, opts: { agent: string; turns: number; filePath?: string; sessionId?: string }) =>
+      capturer.attachContext(settings.get(), opts),
   );
   ipcMain.handle('capture:clearContext', () => capturer.clearContext());
   ipcMain.handle('pack:current', () => capturer.currentPayload(settings.get()) ?? null);
@@ -156,6 +175,17 @@ function wireIpc(): void {
   ipcMain.handle('win:focusSelf', () => {
     if (panelWin.isVisible()) panelWin.focus();
   });
+  // panel height follows its content (review #8): renderer reports natural height
+  ipcMain.on('win:autoHeight', (_e, h: number) => {
+    if (panelWin.isDestroyed() || !panelWin.isVisible()) return;
+    const b = panelWin.getBounds();
+    const wa = screen.getDisplayNearestPoint({ x: b.x, y: b.y }).workArea;
+    const max = wa.y + wa.height - b.y - 8;
+    const next = Math.max(240, Math.min(Math.ceil(h), max));
+    if (Math.abs(next - b.height) <= 2) return;
+    panelHeight = next;
+    panelWin.setBounds({ ...b, height: next });
+  });
   ipcMain.handle('app:quit', () => app.quit());
 }
 
@@ -171,8 +201,8 @@ function startClipboardWatch(): void {
     }
     if (text && text !== lastClip) {
       lastClip = text;
-      const payload = { chars: text.length, firstLine: text.split('\n')[0]?.slice(0, 80) };
-      for (const w of [chipWin, panelWin]) if (w.isVisible()) w.webContents.send('clipboard:new', payload);
+      clipUnread = { chars: text.length, firstLine: text.split('\n')[0]?.slice(0, 80) ?? '' };
+      notifyClip();
     }
   }, 800);
 }

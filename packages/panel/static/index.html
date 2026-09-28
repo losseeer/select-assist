@@ -14,17 +14,17 @@
   <div id="chip">
     <span id="dot" title="展开面板">▸</span>
     <span class="title">select-assist</span>
-    <span id="chip-badge" class="hidden">有新复制</span>
+    <span id="chip-badge" aria-label="剪贴板有新复制"></span>
     <button id="chip-capture" title="把刚才 ⌘C 的内容取进来">取入选区</button>
   </div>
 
   <!-- ======== panel window (focusable, shown/hidden) ======== -->
   <div id="panel">
     <div id="panel-head">
-      <span id="collapse" title="折叠">▾</span>
+      <span id="collapse" title="折叠" tabindex="0" role="button" aria-label="折叠">▾</span>
       <span class="title">select-assist</span>
       <button id="head-capture" title="把刚才 ⌘C 的内容取进来">取入选区</button>
-      <span id="quit" title="退出常驻">✕</span>
+      <span id="quit" title="退出常驻" tabindex="0" role="button" aria-label="退出常驻">✕</span>
     </div>
 
     <section id="summary">
@@ -57,6 +57,7 @@
     <section id="browser" class="hidden">
       <div id="browser-tip">按最近修改排序；点一条即用它填充上下文</div>
       <div id="browser-list"></div>
+      <div id="browser-path"></div>
     </section>
 
     <section id="actions">
@@ -70,8 +71,8 @@
       <label>提问指令（<code>{selection}</code> 会被替换为选区原文）
         <textarea id="set-prompt" rows="3"></textarea>
       </label>
-      <label>项目路径（判定会话用，可留空靠浏览选择）<input id="set-project" placeholder="/Users/x/prj" /></label>
-      <label>字符上限 <input id="set-max" type="number" min="500" step="500" /></label>
+      <label>项目路径（判定会话用；也可直接填某个 .jsonl 会话文件）<input id="set-project" placeholder="/Users/x/prj 或 …/session.jsonl" /></label>
+      <p class="hint">上下文只按「轮数」截取最近对话，不做任何字符截断；组装字数显示在按钮下方，目标站输入框放不下时减少轮数。</p>
       <label><input id="set-redact" type="checkbox" /> 路径脱敏（复制时家目录写作 ~）</label>
       <label>目标站（每行一条：名称|URL）</label>
       <textarea id="set-sites" rows="3"></textarea>

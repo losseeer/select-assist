@@ -8,13 +8,14 @@ import {
   codexAdapter,
   workbuddyAdapter,
   qoderAdapter,
-  DEFAULT_MAX_CHARS,
   type CtxPack,
   type SessionRef,
   type TrackBAdapter,
   type TranscriptTurn,
 } from '@select-assist/ctxpack';
 import { clipboard } from 'electron';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { Settings } from './settings.js';
 
 const ADAPTERS: Record<string, TrackBAdapter> = {
@@ -26,8 +27,20 @@ const ADAPTERS: Record<string, TrackBAdapter> = {
 
 export const AGENT_CHOICES = ['auto', ...Object.keys(ADAPTERS)] as const;
 
-/** pure record, no scaffolding sentences — the prompt template provides the framing */
+/** Resolve which adapter reads an explicitly chosen file; path layout identifies the agent. */
+function adapterForFile(file: string, hint: string): { adapter: TrackBAdapter; agent: string } | undefined {
+  if (hint !== 'auto' && ADAPTERS[hint]) return { adapter: ADAPTERS[hint]!, agent: hint };
+  if (file.includes('/.codex/')) return { adapter: ADAPTERS.codex!, agent: 'codex' };
+  if (file.includes('/.workbuddy/')) return { adapter: ADAPTERS.workbuddy!, agent: 'workbuddy' };
+  if (file.includes('/.qoder-cn/') || file.includes('QoderWork')) return { adapter: ADAPTERS.qoder!, agent: 'qoder' };
+  if (file.endsWith('.jsonl')) return { adapter: ADAPTERS['claude-code']!, agent: 'claude-code' };
+  return undefined;
+}
+
 const PACK_TEMPLATE = 'clean/v1';
+
+/** the round-count choice is the ONLY trimming knob — no char truncation anywhere */
+const NO_BUDGET = Number.MAX_SAFE_INTEGER;
 
 export interface SelectionSummary {
   ok: boolean;
@@ -62,8 +75,15 @@ export class Capturer {
   context: ContextSummary = {};
 
   /** Track B selection source: the clipboard, must be instant (no parsing here). */
-  captureFromClipboard(settings: Settings): SelectionSummary {
-    const text = clipboard.readText();
+  captureFromClipboard(): SelectionSummary {
+    let text: string;
+    try {
+      text = clipboard.readText();
+    } catch (e) {
+      const s: SelectionSummary = { ok: false, reason: `读取剪贴板失败：${(e as Error).message}` };
+      this.selectionSummary = s;
+      return s;
+    }
     const summary: SelectionSummary = text.trim()
       ? (() => {
           const at = new Date().toISOString();
@@ -71,7 +91,7 @@ export class Capturer {
             selection: { text, role: 'unknown' },
             capture: { via: 'clipboard', at },
             source: { app: 'desktop' },
-            maxChars: settings.maxChars,
+            maxChars: NO_BUDGET,
             templateId: PACK_TEMPLATE,
           });
           this.context = {};
@@ -95,19 +115,35 @@ export class Capturer {
   /** Explicit opt-in only; may take hundreds of ms — never called by captureFromClipboard. */
   async attachContext(
     settings: Settings,
-    opts: { agent: string; turns: number; filePath?: string },
+    opts: { agent: string; turns: number; filePath?: string; sessionId?: string },
   ): Promise<ContextSummary> {
     if (!this.pack) return (this.context = { error: '请先取入选区' });
     const cwd = settings.projectPath || undefined;
+    // a project path pointing at a .jsonl file is a direct session pick
+    const directFile = opts.filePath ?? (cwd?.endsWith('.jsonl') ? cwd : undefined);
 
     let chosen: { adapter: TrackBAdapter; ref: SessionRef; basis: string } | undefined;
-    try {
-      const candidates = await this.discover(opts.agent, opts.filePath ? undefined : cwd);
-      if (opts.filePath) {
-        const own = candidates.find((c) => c.ref.filePath === opts.filePath);
-        if (!own) return (this.context = { error: '所选会话已不可见（被移动或删除）' });
-        chosen = { ...own, basis: '用户手动选择' };
-      } else {
+    if (directFile) {
+      if (!fs.existsSync(directFile)) {
+        return (this.context = { error: `会话文件不存在：${directFile}` });
+      }
+      const owner = adapterForFile(directFile, opts.agent);
+      if (!owner) return (this.context = { error: `无法判定该文件的 agent 类型：${directFile}` });
+      const base = path.basename(directFile).replace(/\.(jsonl|db)$/, '');
+      chosen = {
+        adapter: owner.adapter,
+        ref: {
+          agent: owner.agent,
+          adapter: owner.adapter.adapter,
+          filePath: directFile,
+          sessionId: opts.sessionId ?? (/^[0-9a-f-]{36}$/.test(base) ? base : undefined),
+          mtimeMs: fs.statSync(directFile).mtimeMs,
+        },
+        basis: opts.filePath ? '用户手动选择' : '设置指定会话文件',
+      };
+    } else {
+      try {
+        const candidates = await this.discover(opts.agent, cwd);
         const pick = pickSession(
           candidates.map((c) => c.ref),
           cwd,
@@ -116,16 +152,17 @@ export class Capturer {
           const owner = candidates.find((c) => c.ref === pick.ref)!;
           chosen = { adapter: owner.adapter, ref: pick.ref, basis: pick.basis };
         }
+      } catch (e) {
+        return (this.context = { error: `会话发现失败：${(e as Error).message}` });
       }
-    } catch (e) {
-      return (this.context = { error: `会话发现失败：${(e as Error).message}` });
     }
 
     if (!chosen) return (this.context = { error: '未发现可用会话文件，将只带选区' });
 
     const result = await chosen.adapter.readTranscript(chosen.ref);
     const base = this.pack;
-    const turns: TranscriptTurn[] = result.turns.slice(-Math.max(1, opts.turns));
+    // one 轮 = one user + one assistant exchange
+    const turns: TranscriptTurn[] = result.turns.slice(-Math.max(1, opts.turns) * 2);
     const droppedDefaults = [
       ...(result.error ? [`adapter-error:${result.error}`, ...result.dropped] : result.dropped),
     ];
@@ -141,7 +178,7 @@ export class Capturer {
         adapter: chosen.adapter.adapter,
       },
       transcript: turns,
-      maxChars: settings.maxChars,
+      maxChars: NO_BUDGET,
       templateId: PACK_TEMPLATE,
       defaultDropped: droppedDefaults,
       generatedAt: base.generatedAt,
@@ -150,7 +187,7 @@ export class Capturer {
       agent: chosen.ref.agent,
       sessionId: chosen.ref.sessionId,
       basis: result.error ? `${chosen.basis}（解析失败，降级为只带选区）` : chosen.basis,
-      turnsIncluded: result.error ? 0 : turns.length,
+      turnsIncluded: result.error ? 0 : Math.ceil(turns.length / 2),
       error: result.error,
     };
     return this.context;
@@ -163,7 +200,7 @@ export class Capturer {
       selection: base.selection!,
       capture: base.capture,
       source: base.source,
-      maxChars: base.limits?.maxChars ?? DEFAULT_MAX_CHARS,
+      maxChars: NO_BUDGET,
       templateId: PACK_TEMPLATE,
       generatedAt: base.generatedAt,
     });
@@ -193,8 +230,9 @@ export class Capturer {
   }
 
   /**
-   * Assembled prompt = instruction line (selection quoted) + clean context pack,
-   * hard-capped at settings.maxChars as a whole (see ctxpack assemblePrompt).
+   * Assembled prompt = instruction line (selection quoted) + clean context pack.
+   * No char trimming: the round count is the only size knob; the panel shows
+   * the assembled length so the user can dial rounds down for smaller input boxes.
    */
   currentPayload(settings: Settings):
     | { prompt: string; context: string; usedChars: number; dropped: string[] }
@@ -210,7 +248,7 @@ export class Capturer {
       template: settings.promptTemplate,
       selection: pack.selection?.text ?? '',
       context,
-      maxChars: settings.maxChars,
+      maxChars: NO_BUDGET,
     });
     return {
       prompt,

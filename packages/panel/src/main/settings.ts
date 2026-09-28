@@ -11,7 +11,6 @@ export interface Settings {
   windowY?: number;
   expanded: boolean;
   sites: SiteTarget[];
-  maxChars: number;
   promptTemplate: string;
   projectPath: string;
   redactPaths: boolean;
@@ -28,7 +27,6 @@ const DEFAULTS: Settings = {
     { name: 'ChatGPT', url: 'https://chatgpt.com/' },
     { name: 'Gemini', url: 'https://gemini.google.com/' },
   ],
-  maxChars: 8000,
   promptTemplate: DEFAULT_PROMPT_TEMPLATE,
   projectPath: '',
   redactPaths: false,

@@ -55,6 +55,40 @@ test('oversized selection is truncated explicitly, marked in dropped', () => {
   assert.ok(pack.limits.dropped.includes('selection:truncated'));
 });
 
+test('long turns are capped (breadth first) before whole turns are dropped', () => {
+  const turns = Array.from({ length: 30 }, (_, i) => ({
+    role: i % 2 === 0 ? 'user' : 'assistant',
+    text: `T${i} ` + 'x'.repeat(3000),
+    seq: i,
+  }));
+  const pack = buildPack({
+    selection: { text: 'sel' }, capture, transcript: turns,
+    maxChars: 8000, templateId: 'clean/v1',
+  });
+  assert.equal(pack.transcript.length, 30, 'all 30 turns must survive as capped');
+  assert.ok(pack.payload.length <= 8000);
+  assert.ok(pack.limits.dropped.some((d) => /^turns:capped-\d+$/.test(d)));
+  assert.ok(pack.payload.includes('T0 '), 'oldest turn still represented');
+  assert.ok(pack.payload.includes('…'), 'cap marker is visible');
+  assert.ok(validatePack(pack).ok);
+});
+
+test('capping falls back to dropping oldest when even 120-char cap cannot fit', () => {
+  const turns = Array.from({ length: 100 }, (_, i) => ({
+    role: i % 2 === 0 ? 'user' : 'assistant',
+    text: `T${i} ` + 'x'.repeat(3000),
+    seq: i,
+  }));
+  const pack = buildPack({
+    selection: { text: 'sel' }, capture, transcript: turns,
+    maxChars: 2000, templateId: 'clean/v1',
+  });
+  assert.ok(pack.payload.length <= 2000);
+  assert.ok(pack.transcript.length < 100);
+  assert.ok(pack.limits.dropped.some((d) => /^turns:\d+-\d+$/.test(d)));
+  assert.ok(pack.payload.includes('T99'), 'newest turns survive');
+});
+
 test('adapter default drops (tool-results etc.) flow into payload', () => {
   const pack = buildPack({
     selection: { text: 'a' },

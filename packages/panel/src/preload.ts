@@ -10,7 +10,7 @@ function on<T>(channel: string, cb: (data: T) => void): () => void {
 contextBridge.exposeInMainWorld('api', {
   captureSelection: () => ipcRenderer.invoke('capture:selection'),
   captureSummary: () => ipcRenderer.invoke('capture:summary'),
-  attachContext: (opts: { agent: string; turns: number; filePath?: string }) =>
+  attachContext: (opts: { agent: string; turns: number; filePath?: string; sessionId?: string }) =>
     ipcRenderer.invoke('capture:context', opts),
   clearContext: () => ipcRenderer.invoke('capture:clearContext'),
   browseSessions: () => ipcRenderer.invoke('sessions:browse'),
@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('api', {
   expand: () => ipcRenderer.invoke('win:expand'),
   collapse: () => ipcRenderer.invoke('win:collapse'),
   focusSelf: () => ipcRenderer.invoke('win:focusSelf'),
+  autoHeight: (h: number) => ipcRenderer.send('win:autoHeight', h),
   quit: () => ipcRenderer.invoke('app:quit'),
   onClipboardNew: (cb: (d: { chars: number; firstLine: string }) => void) =>
     on('clipboard:new', cb),

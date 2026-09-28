@@ -12,17 +12,15 @@ if (MODE === 'chip') {
     btn.classList.add('busy');
     try {
       await api.captureSelection();
-      $('chip-badge').classList.add('hidden');
-      api.expand();
+      $('chip-badge').classList.remove('on');
     } finally {
       btn.classList.remove('busy');
+      // always open the panel — failures surface there instead of dying silently
+      api.expand();
     }
   });
-  api.onClipboardNew(({ chars, firstLine }) => {
-    const b = $('chip-badge');
-    b.classList.remove('hidden');
-    b.title = `剪贴板 ${chars} 字：${firstLine}`;
-  });
+  // payload null means "state cleared" — toggle so a capture in either window lights out both
+  api.onClipboardNew((d) => $('chip-badge').classList.toggle('on', !!d));
 }
 
 // ================= panel window =================
@@ -30,6 +28,29 @@ if (MODE === 'panel') {
   let settings = null;
   let lastCtx = null;
   let browsing = null; // selected filePath from browser
+
+  function keyActivate(el, fn) {
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        fn(e);
+      }
+    });
+  }
+
+  // panel window height follows content (review #8): report natural content height upward
+  function reportHeight() {
+    const panel = $('panel');
+    const last = panel.lastElementChild;
+    if (!last) return;
+    const pad = parseFloat(getComputedStyle(panel).paddingBottom) || 0;
+    api.autoHeight(Math.ceil(last.getBoundingClientRect().bottom + pad) + 4);
+  }
+  let heightTimer;
+  new MutationObserver(() => {
+    clearTimeout(heightTimer);
+    heightTimer = setTimeout(reportHeight, 120);
+  }).observe($('panel'), { childList: true, subtree: true, attributes: true, characterData: true });
 
   document.addEventListener('mousedown', (e) => {
     const t = e.target;
@@ -39,17 +60,21 @@ if (MODE === 'panel') {
   });
 
   $('collapse').addEventListener('click', () => api.collapse());
+  keyActivate($('collapse'), () => api.collapse());
   $('quit').addEventListener('click', () => api.quit());
+  keyActivate($('quit'), () => api.quit());
   $('head-capture').addEventListener('click', async () => {
     const btn = $('head-capture');
     btn.classList.add('busy');
     try {
-      await api.captureSelection();
+      const r = await api.captureSelection();
+      if (r && r.ok !== false) btn.classList.remove('newclip');
       await refreshSummary();
     } finally {
       btn.classList.remove('busy');
     }
   });
+  api.onClipboardNew((d) => $('head-capture').classList.toggle('newclip', !!d));
 
   async function refreshSummary() {
     const s = await api.captureSummary();
@@ -66,7 +91,10 @@ if (MODE === 'panel') {
     renderSessionLine();
     refreshPackMeta();
   }
-  api.onWinShown(() => refreshSummary());
+  api.onWinShown(async () => {
+    await refreshSummary();
+    reportHeight();
+  });
 
   function renderSessionLine() {
     const el = $('sum-session');
@@ -74,7 +102,7 @@ if (MODE === 'panel') {
     if (!lastCtx || (!lastCtx.agent && !lastCtx.error)) { el.textContent = '上下文未填充'; return; }
     if (lastCtx.error) { el.textContent = `上下文：${lastCtx.error}`; return; }
     el.textContent =
-      `判定会话：${lastCtx.agent} / ${(lastCtx.sessionId ?? '').slice(0, 12)} · ${lastCtx.turnsIncluded} 条 · 判据：${lastCtx.basis}`;
+      `判定会话：${lastCtx.agent} / ${(lastCtx.sessionId ?? '').slice(0, 12)} · ${lastCtx.turnsIncluded} 轮 · 判据：${lastCtx.basis}`;
   }
 
   // ---------- context ----------
@@ -100,6 +128,7 @@ if (MODE === 'panel') {
       agent: browsing ? browsing.agent : $('ctx-agent').value,
       turns: Number($('ctx-turns').value),
       filePath: browsing?.filePath,
+      sessionId: browsing?.sessionId,
     });
     lastCtx = r;
     flashStatus(r.error ?? '', !!r.error);
@@ -112,8 +141,10 @@ if (MODE === 'panel') {
     const sec = $('browser');
     if (!sec.classList.contains('hidden')) { sec.classList.add('hidden'); return; }
     sec.classList.remove('hidden');
-    const list = await api.browseSessions();
     const wrap = $('browser-list');
+    const pathEl = $('browser-path');
+    wrap.innerHTML = '<div class="br-loading">正在发现会话…</div>';
+    const list = await api.browseSessions();
     wrap.innerHTML = '';
     if (list.length === 0) {
       wrap.innerHTML = '<div class="br-item"><span class="pv">未发现任何可解析的会话（Trae 数据库加密暂不支持）</span></div>';
@@ -122,19 +153,26 @@ if (MODE === 'panel') {
     for (const e of list) {
       const div = document.createElement('div');
       div.className = 'br-item';
+      div.tabIndex = 0;
+      div.setAttribute('role', 'option');
       const nm = e.name || (e.projectPath ? e.projectPath.split('/').pop() : (e.sessionId ?? '').slice(0, 8));
-      div.innerHTML = `<div class="l1"><span class="ag">${e.agent}</span><span class="nm"></span><span class="mt">${new Date(e.mtime).toLocaleString()}</span></div><div class="pv"></div>`;
+      const sid = e.sessionId ? `#${e.sessionId.slice(0, 8)}` : '';
+      div.innerHTML = `<div class="l1"><span class="ag">${e.agent}${sid}</span><span class="nm"></span><span class="mt">${new Date(e.mtime).toLocaleString()}</span></div><div class="pv"></div>`;
       div.querySelector('.nm').textContent = nm + (e.projectPath ? ` · ${e.projectPath}` : '');
       div.querySelector('.pv').textContent = e.preview ?? '';
-      div.title = e.filePath;
-      div.addEventListener('click', async () => {
+      // hover path goes to its own line — ctx-status stays reserved for loading/errors
+      div.addEventListener('mouseenter', () => { pathEl.textContent = e.filePath; });
+      div.addEventListener('mouseleave', () => { pathEl.textContent = ''; });
+      const choose = async () => {
         wrap.querySelectorAll('.sel').forEach((x) => x.classList.remove('sel'));
         div.classList.add('sel');
-        browsing = { agent: e.agent, filePath: e.filePath };
+        browsing = { agent: e.agent, filePath: e.filePath, sessionId: e.sessionId };
         $('ctx-agent').value = e.agent;
         await refreshContext();
         sec.classList.add('hidden');
-      });
+      };
+      div.addEventListener('click', choose);
+      keyActivate(div, choose);
       wrap.appendChild(div);
     }
   });
@@ -183,26 +221,32 @@ if (MODE === 'panel') {
     renderSites();
     $('set-prompt').value = settings.promptTemplate ?? '';
     $('set-project').value = settings.projectPath ?? '';
-    $('set-max').value = settings.maxChars;
     $('set-redact').checked = !!settings.redactPaths;
     $('set-sites').value = settings.sites.map((s) => `${s.name}|${s.url}`).join('\n');
     refreshSummary();
   }
+  $('settings').addEventListener('input', () => $('set-save').classList.add('dirty'));
   $('set-save').addEventListener('click', async () => {
-    const sites = $('set-sites').value
-      .split('\n')
-      .map((l) => l.split('|'))
-      .filter((p) => p.length >= 2 && p[0].trim() && p[1].trim())
-      .map(([name, url]) => ({ name: name.trim(), url: url.trim() }));
+    const sites = [];
+    const bad = [];
+    $('set-sites').value.split('\n').forEach((line, i) => {
+      if (!line.trim()) return;
+      const p = line.split('|');
+      const name = p[0]?.trim();
+      const url = p[1]?.trim();
+      if (p.length >= 2 && name && url && /^https?:\/\//i.test(url)) sites.push({ name, url });
+      else bad.push(i + 1);
+    });
     settings = await api.patchSettings({
       promptTemplate: $('set-prompt').value.trim(),
       projectPath: $('set-project').value.trim(),
-      maxChars: Number($('set-max').value) || 8000,
       redactPaths: $('set-redact').checked,
       sites: sites.length ? sites : settings.sites,
     });
     renderSites();
-    flashStatus('已保存');
+    $('set-save').classList.remove('dirty');
+    if (bad.length) flashStatus(`目标站第 ${bad.join('、')} 行无效（需 名称|http(s)://URL），该行未生效`, true);
+    else flashStatus('已保存');
   });
 
   init();
