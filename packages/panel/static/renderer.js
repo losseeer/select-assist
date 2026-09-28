@@ -4,14 +4,100 @@
 const $ = (id) => document.getElementById(id);
 const MODE = document.documentElement.dataset.mode; // 'chip' | 'panel'
 
+// ================= custom tooltip (both windows) =================
+// native title is unusable: alwaysOnTop windows cover their own tooltips
+const tooltip = (() => {
+  const el = document.createElement('div');
+  el.id = 'tooltip';
+  document.body.appendChild(el);
+  let target = null;
+  let timer;
+
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const setTip = (text) => { el.innerHTML = esc(text).replace(/`([^`]+)`/g, '<code>$1</code>'); };
+
+  function place(t) {
+    const r = t.getBoundingClientRect();
+    el.style.visibility = 'hidden';
+    el.classList.add('show');
+    const tr = el.getBoundingClientRect();
+    const gap = 6;
+    const pad = 4;
+    const fits = (x, y) => x >= pad && x + tr.width <= window.innerWidth - pad && y >= pad && y + tr.height <= window.innerHeight - pad;
+    const cx = (x) => Math.max(pad, Math.min(x, window.innerWidth - pad - tr.width));
+    let x = cx(r.left + r.width / 2 - tr.width / 2);
+    let y = r.bottom + gap;
+    if (!fits(x, y)) y = r.top - tr.height - gap; // flip above
+    if (!fits(x, y)) {
+      // too short a window (e.g. the 44px chip) for below/above — sit beside the target
+      y = Math.max(pad, Math.min(r.top + r.height / 2 - tr.height / 2, window.innerHeight - pad - tr.height));
+      x = r.right + gap;
+      if (!fits(x, y)) x = r.left - tr.width - gap;
+    }
+    if (!fits(x, y)) { x = cx(r.left + r.width / 2 - tr.width / 2); y = Math.max(pad, r.bottom + gap); }
+    el.style.left = `${Math.round(x)}px`;
+    el.style.top = `${Math.round(y)}px`;
+    el.style.visibility = '';
+  }
+  function show(t) {
+    target = t;
+    setTip(t.dataset.tip);
+    place(t);
+  }
+  function hide() {
+    clearTimeout(timer);
+    target = null;
+    el.classList.remove('show');
+  }
+  document.addEventListener('mouseover', (e) => {
+    const t = e.target.closest ? e.target.closest('[data-tip]') : null;
+    if (t === target) return;
+    clearTimeout(timer);
+    if (!t) { hide(); return; }
+    timer = setTimeout(() => show(t), 400);
+  });
+  document.addEventListener('mouseout', (e) => {
+    if (!target) return;
+    const t = e.target.closest ? e.target.closest('[data-tip]') : null;
+    if (t === target && !(e.relatedTarget && target.contains(e.relatedTarget))) hide();
+  });
+  document.addEventListener('focusin', (e) => {
+    const t = e.target.closest ? e.target.closest('[data-tip]') : null;
+    if (t) show(t); else hide();
+  });
+  document.addEventListener('focusout', hide);
+  window.addEventListener('blur', hide);
+  return { hide };
+})();
+
 // ================= chip window =================
 if (MODE === 'chip') {
   $('dot').addEventListener('click', () => api.expand());
+
+  async function refreshChipStatus() {
+    const s = await api.captureSummary();
+    const st = $('chip-status');
+    st.classList.remove('err');
+    if (s.selection?.ok) {
+      st.textContent = s.selection.firstLine || '已取入选区';
+      st.dataset.tip = `来源：剪贴板 · ${new Date(s.selection.captureAt).toLocaleTimeString()} · ${s.selection.chars} 字`;
+    } else {
+      st.textContent = '还没有选区';
+      st.dataset.tip = '在源界面 ⌘C，再点「取入选区」';
+    }
+  }
+
   $('chip-capture').addEventListener('click', async () => {
     const btn = $('chip-capture');
     btn.classList.add('busy');
     try {
-      await api.captureSelection();
+      const r = await api.captureSelection();
+      if (r && r.ok === false) {
+        const st = $('chip-status');
+        st.textContent = r.reason ?? '取入失败';
+        st.classList.add('err');
+        setTimeout(refreshChipStatus, 3000);
+      }
       $('chip-badge').classList.remove('on');
     } finally {
       btn.classList.remove('busy');
@@ -19,8 +105,9 @@ if (MODE === 'chip') {
       api.expand();
     }
   });
-  // payload null means "state cleared" — toggle so a capture in either window lights out both
   api.onClipboardNew((d) => $('chip-badge').classList.toggle('on', !!d));
+  api.onWinShown(refreshChipStatus);
+  refreshChipStatus();
 }
 
 // ================= panel window =================
@@ -80,7 +167,7 @@ if (MODE === 'panel') {
     btn.classList.add('busy');
     try {
       const r = await api.captureSelection();
-      if (r && r.ok !== false) btn.classList.remove('newclip');
+      if (r && r.ok === false) flashStatus(r.reason ?? '取入失败', true);
       await refreshSummary();
     } finally {
       btn.classList.remove('busy');
@@ -90,14 +177,13 @@ if (MODE === 'panel') {
 
   async function refreshSummary() {
     const s = await api.captureSummary();
+    const st = $('head-status');
     if (s.selection?.ok) {
-      $('summary-empty').classList.add('hidden');
-      $('summary-body').classList.remove('hidden');
-      $('sum-first').textContent = s.selection.firstLine || '（无首行）';
-      $('sum-meta').textContent =
-        `来源：剪贴板 · ${new Date(s.selection.captureAt).toLocaleTimeString()} · ${s.selection.chars} 字`;
-    } else if (s.selection && !s.selection.ok) {
-      $('summary-empty').textContent = s.selection.reason ?? '';
+      st.textContent = s.selection.firstLine || '已取入选区';
+      st.dataset.tip = `来源：剪贴板 · ${new Date(s.selection.captureAt).toLocaleTimeString()} · ${s.selection.chars} 字`;
+    } else {
+      st.textContent = '还没有选区';
+      st.dataset.tip = '在源界面 ⌘C，再点「取入选区」';
     }
     lastCtx = s.context;
     renderSessionLine();
@@ -118,14 +204,14 @@ if (MODE === 'panel') {
     if (!$('with-ctx').checked) { el.textContent = ''; return; }
     if (!lastCtx || (!lastCtx.agent && !lastCtx.error)) { el.textContent = '上下文未填充'; return; }
     if (lastCtx.error) { el.textContent = `上下文：${lastCtx.error}`; return; }
-    el.textContent =
-      `判定会话：${lastCtx.agent} / ${(lastCtx.sessionId ?? '').slice(0, 12)} · ${lastCtx.turnsIncluded} 轮 · 判据：${lastCtx.basis}`;
+    el.textContent = `判定会话：${lastCtx.agent} · ${lastCtx.turnsIncluded} 轮`;
+    el.dataset.tip = `会话 id：${lastCtx.sessionId ?? '—'}\n判据：${lastCtx.basis}`;
   }
 
   // ---------- context ----------
   $('with-ctx').addEventListener('change', async (e) => {
-    $('ctx-refresh').classList.toggle('hidden', !e.target.checked);
-    $('ctx-browse').classList.toggle('hidden', !e.target.checked);
+    // visibility (not display): the button row keeps its slot so the layout never jumps
+    $('ctx-actions').classList.toggle('off', !e.target.checked);
     if (!e.target.checked) {
       $('browser').classList.add('hidden');
       lastCtx = null;
@@ -135,6 +221,7 @@ if (MODE === 'panel') {
     } else {
       await refreshContext();
     }
+    chaseHeight();
   });
   $('ctx-refresh').addEventListener('click', () => refreshContext());
 
@@ -159,7 +246,6 @@ if (MODE === 'panel') {
     if (!sec.classList.contains('hidden')) { sec.classList.add('hidden'); return; }
     sec.classList.remove('hidden');
     const wrap = $('browser-list');
-    const pathEl = $('browser-path');
     wrap.innerHTML = '<div class="br-loading">正在发现会话…</div>';
     const list = await api.browseSessions();
     wrap.innerHTML = '';
@@ -172,19 +258,18 @@ if (MODE === 'panel') {
       div.className = 'br-item';
       div.tabIndex = 0;
       div.setAttribute('role', 'option');
+      div.dataset.tip = `点击使用此会话\n\`${e.filePath}\``;
       const nm = e.name || (e.projectPath ? e.projectPath.split('/').pop() : (e.sessionId ?? '').slice(0, 8));
       const sid = e.sessionId ? `#${e.sessionId.slice(0, 8)}` : '';
       div.innerHTML = `<div class="l1"><span class="ag">${e.agent}${sid}</span><span class="nm"></span><span class="mt">${new Date(e.mtime).toLocaleString()}</span></div><div class="pv"></div>`;
       div.querySelector('.nm').textContent = nm + (e.projectPath ? ` · ${e.projectPath}` : '');
       div.querySelector('.pv').textContent = e.preview ?? '';
-      // hover path goes to its own line — ctx-status stays reserved for loading/errors
-      div.addEventListener('mouseenter', () => { pathEl.textContent = e.filePath; });
-      div.addEventListener('mouseleave', () => { pathEl.textContent = ''; });
       const choose = async () => {
         wrap.querySelectorAll('.sel').forEach((x) => x.classList.remove('sel'));
         div.classList.add('sel');
         browsing = { agent: e.agent, filePath: e.filePath, sessionId: e.sessionId };
         $('ctx-agent').value = e.agent;
+        tooltip.hide();
         await refreshContext();
         sec.classList.add('hidden');
       };
@@ -206,8 +291,13 @@ if (MODE === 'panel') {
     const el = $('pack-meta');
     const cur = await api.packCurrent();
     if (!cur) { el.textContent = ''; return; }
-    const dropNote = cur.dropped.length ? ` · 已省略 ${cur.dropped.join('、')}` : '';
-    el.textContent = `组装后 ${cur.usedChars} 字${dropNote}`;
+    if (cur.dropped.length) {
+      el.textContent = `组装后 ${cur.usedChars} 字 · 已省略 ${cur.dropped.length} 类`;
+      el.dataset.tip = `已省略：${cur.dropped.join('、')}`;
+    } else {
+      el.textContent = `组装后 ${cur.usedChars} 字`;
+      el.removeAttribute('data-tip');
+    }
   }
 
   $('copy').addEventListener('click', async () => {
@@ -226,7 +316,7 @@ if (MODE === 'panel') {
     for (const s of settings.sites) {
       const b = document.createElement('button');
       b.textContent = s.name;
-      b.title = s.url;
+      b.dataset.tip = s.url;
       b.addEventListener('click', () => api.openSite(s.url));
       wrap.appendChild(b);
     }

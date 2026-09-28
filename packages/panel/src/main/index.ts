@@ -140,6 +140,7 @@ function collapse(): void {
   );
   panelWin.hide();
   chipWin.showInactive();
+  chipWin.webContents.send('win:shown'); // chip status line refreshes like the panel does
   notifyClip();
   const b = chipWin.getBounds();
   settings.patch({ windowX: b.x, windowY: b.y });

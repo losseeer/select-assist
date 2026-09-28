@@ -12,70 +12,60 @@
 <body>
   <!-- ======== chip window = collapsed title bar (focusable:false, non-activating) ======== -->
   <div id="chip">
-    <span id="dot" title="展开面板">▸</span>
-    <span class="title">select-assist</span>
+    <span id="dot" class="icon-btn" data-tip="展开面板" tabindex="0" role="button" aria-label="展开面板">▸</span>
+    <span id="chip-status" class="status">还没有选区</span>
     <span id="chip-badge" aria-label="剪贴板有新复制"></span>
-    <button id="chip-capture" title="把刚才 ⌘C 的内容取进来">取入选区</button>
+    <button id="chip-capture" class="primary" data-tip="把刚才 ⌘C 的内容取进来">取入选区</button>
   </div>
 
   <!-- ======== panel window (focusable, shown/hidden) ======== -->
   <div id="panel">
     <div id="panel-head">
-      <span id="collapse" title="折叠" tabindex="0" role="button" aria-label="折叠">▾</span>
-      <span class="title">select-assist</span>
-      <button id="head-capture" title="把刚才 ⌘C 的内容取进来">取入选区</button>
-      <span id="quit" title="退出常驻" tabindex="0" role="button" aria-label="退出常驻">✕</span>
+      <span id="collapse" class="icon-btn" data-tip="折叠" tabindex="0" role="button" aria-label="折叠">▾</span>
+      <span id="head-status" class="status">还没有选区</span>
+      <button id="head-capture" class="primary" data-tip="把刚才 ⌘C 的内容取进来">取入选区</button>
+      <span id="quit" class="icon-btn" data-tip="退出常驻" tabindex="0" role="button" aria-label="退出常驻">✕</span>
     </div>
 
-    <section id="summary">
-      <div id="summary-empty">还没有选区：在源界面 ⌘C 后点右上「取入选区」</div>
-      <div id="summary-body" class="hidden">
-        <div id="sum-first"></div>
-        <div id="sum-meta"></div>
-        <div id="sum-session"></div>
+    <section id="ctx-group">
+      <div id="ctx-row">
+        <label class="switch"><input type="checkbox" id="with-ctx" /> 会话上下文</label>
+        <select id="ctx-agent">
+          <option value="auto">自动判定</option>
+          <option value="claude-code">Claude Code</option>
+          <option value="codex">Codex</option>
+          <option value="workbuddy">WorkBuddy</option>
+          <option value="qoder">Qoder</option>
+        </select>
+        <select id="ctx-turns" data-tip="上下文只按「轮数」截取最近对话，不做任何字符截断；目标站输入框放不下时减少轮数">
+          <option value="4">4 轮</option><option value="8" selected>8 轮</option><option value="16">16 轮</option><option value="30">30 轮</option>
+        </select>
       </div>
+      <div id="ctx-actions" class="off">
+        <button id="ctx-browse" data-tip="按最近修改排序；点一条即用它填充上下文">浏览会话</button>
+        <button id="ctx-refresh">刷新上下文</button>
+      </div>
+      <div id="sum-session" class="line-slot"></div>
+      <div id="ctx-status" class="line-slot"></div>
+      <section id="browser" class="hidden">
+        <div id="browser-list"></div>
+      </section>
     </section>
 
-    <section id="ctx-row">
-      <label><input type="checkbox" id="with-ctx" /> 附带会话上下文</label>
-      <select id="ctx-agent">
-        <option value="auto">自动判定</option>
-        <option value="claude-code">Claude Code</option>
-        <option value="codex">Codex</option>
-        <option value="workbuddy">WorkBuddy</option>
-        <option value="qoder">Qoder</option>
-      </select>
-      <select id="ctx-turns">
-        <option>4</option><option selected>8</option><option>16</option><option>30</option>
-      </select>
-      <span>轮</span>
-      <button id="ctx-refresh" class="hidden">刷新上下文</button>
-      <button id="ctx-browse" class="hidden">浏览会话</button>
+    <section id="act-group">
+      <div id="actions">
+        <button id="copy" class="primary" data-tip="组装 Prompt 并复制到剪贴板">复制 Prompt</button>
+        <span id="sites"></span>
+      </div>
+      <div id="pack-meta" class="line-slot"></div>
     </section>
-    <div id="ctx-status"></div>
-
-    <section id="browser" class="hidden">
-      <div id="browser-tip">按最近修改排序；点一条即用它填充上下文</div>
-      <div id="browser-list"></div>
-      <div id="browser-path"></div>
-    </section>
-
-    <section id="actions">
-      <button id="copy" class="primary">复制 Prompt</button>
-      <span id="sites"></span>
-    </section>
-    <div id="pack-meta"></div>
 
     <details id="settings">
       <summary>设置</summary>
-      <label>提问指令（<code>{selection}</code> 会被替换为选区原文）
-        <textarea id="set-prompt" rows="3"></textarea>
-      </label>
-      <label>项目路径（判定会话用；也可直接填某个 .jsonl 会话文件）<input id="set-project" placeholder="/Users/x/prj 或 …/session.jsonl" /></label>
-      <p class="hint">上下文只按「轮数」截取最近对话，不做任何字符截断；组装字数显示在按钮下方，目标站输入框放不下时减少轮数。</p>
-      <label><input id="set-redact" type="checkbox" /> 路径脱敏（复制时家目录写作 ~）</label>
-      <label>目标站（每行一条：名称|URL）</label>
-      <textarea id="set-sites" rows="3"></textarea>
+      <label>提问指令<textarea id="set-prompt" rows="3" data-tip="{selection} 会被替换为选区原文"></textarea></label>
+      <label>项目路径<input id="set-project" data-tip="判定会话用；也可直接填某个 .jsonl 会话文件的完整路径" placeholder="/Users/x/prj 或 …/session.jsonl" /></label>
+      <label class="switch"><input id="set-redact" type="checkbox" data-tip="复制时家目录写作 ~" /> 路径脱敏</label>
+      <label>目标站<textarea id="set-sites" rows="3" data-tip="每行一条：名称|URL"></textarea></label>
       <button id="set-save">保存设置</button>
     </details>
   </div>
