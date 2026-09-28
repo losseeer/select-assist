@@ -52,6 +52,18 @@ if (MODE === 'panel') {
     heightTimer = setTimeout(reportHeight, 120);
   }).observe($('panel'), { childList: true, subtree: true, attributes: true, characterData: true });
 
+  // while content animates (details open/close), the WINDOW must follow every frame —
+  // one-shot setBounds after the debounce is what made the settings expand look janky
+  function chaseHeight(duration = 260) {
+    const start = performance.now();
+    const step = (now) => {
+      reportHeight();
+      if (now - start < duration) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  $('settings').addEventListener('toggle', () => chaseHeight());
+
   document.addEventListener('mousedown', (e) => {
     const t = e.target;
     if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') {
@@ -92,6 +104,11 @@ if (MODE === 'panel') {
     refreshPackMeta();
   }
   api.onWinShown(async () => {
+    // replay entrance animation on every expand (window show does not reload the page)
+    const p = $('panel');
+    p.classList.remove('enter');
+    void p.offsetWidth;
+    p.classList.add('enter');
     await refreshSummary();
     reportHeight();
   });
