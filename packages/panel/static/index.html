@@ -29,17 +29,22 @@
 
     <section id="ctx-group">
       <div id="ctx-row">
-        <label class="switch"><input type="checkbox" id="with-ctx" /> 会话上下文</label>
-        <select id="ctx-agent">
-          <option value="auto">自动判定</option>
-          <option value="claude-code">Claude Code</option>
-          <option value="codex">Codex</option>
-          <option value="workbuddy">WorkBuddy</option>
-          <option value="qoder">Qoder</option>
-        </select>
-        <select id="ctx-turns" data-tip="上下文只按「轮数」截取最近对话，不做任何字符截断；目标站输入框放不下时减少轮数">
-          <option value="4">4 轮</option><option value="8" selected>8 轮</option><option value="16">16 轮</option><option value="30">30 轮</option>
-        </select>
+        <div id="mode-seg" role="tablist" aria-label="工作模式">
+          <button type="button" role="tab" id="mode-read" aria-selected="true" data-tip="带上 agent 会话历史，组装成解读 Prompt">会话解读</button>
+          <button type="button" role="tab" id="mode-direct" aria-selected="false" data-tip="不带任何上下文，复制的就是选区的逐字节原文（翻译 / 检索 / 粘贴即用）">选区直通</button>
+        </div>
+        <span id="ctx-selects">
+          <select id="ctx-agent">
+            <option value="auto">自动判定</option>
+            <option value="claude-code">Claude Code</option>
+            <option value="codex">Codex</option>
+            <option value="workbuddy">WorkBuddy</option>
+            <option value="qoder">Qoder</option>
+          </select>
+          <select id="ctx-turns" data-tip="上下文只按「轮数」截取最近对话，不做任何字符截断；目标站输入框放不下时减少轮数">
+            <option value="4">4 轮</option><option value="8" selected>8 轮</option><option value="16">16 轮</option><option value="30">30 轮</option>
+          </select>
+        </span>
       </div>
       <div id="ctx-actions" class="off">
         <button id="ctx-browse" data-tip="按最近修改排序；点一条即用它填充上下文">浏览会话</button>
@@ -62,10 +67,13 @@
 
     <details id="settings">
       <summary>设置</summary>
-      <label>提问指令<textarea id="set-prompt" rows="3" data-tip="{selection} 会被替换为选区原文"></textarea></label>
-      <label>项目路径<input id="set-project" data-tip="判定会话用；也可直接填某个 .jsonl 会话文件的完整路径" placeholder="/Users/x/prj 或 …/session.jsonl" /></label>
-      <label class="switch"><input id="set-redact" type="checkbox" data-tip="复制时家目录写作 ~" /> 路径脱敏</label>
-      <label>目标站<textarea id="set-sites" rows="3" data-tip="每行一条：名称|URL"></textarea></label>
+      <div class="ctx-only">
+        <label>提问指令<textarea id="set-prompt" rows="3" data-tip="{selection} 会被替换为选区原文"></textarea></label>
+        <label>项目路径<input id="set-project" data-tip="判定会话用；也可直接填某个 .jsonl 会话文件的完整路径" placeholder="/Users/x/prj 或 …/session.jsonl" /></label>
+        <label class="switch"><input id="set-redact" type="checkbox" data-tip="复制时家目录写作 ~" /> 路径脱敏</label>
+      </div>
+      <label class="site-edit" data-for="read">目标站<textarea id="set-chat-sites" rows="3" data-tip="每行一条：名称|URL；「会话解读」组装 Prompt 后打开的 LLM 对话站"></textarea></label>
+      <label class="site-edit" data-for="direct">目标站<textarea id="set-direct-sites" rows="3" data-tip="每行一条：名称|URL；「选区直通」复制原文后打开的翻译 / 搜索站"></textarea></label>
       <button id="set-save">保存设置</button>
     </details>
   </div>

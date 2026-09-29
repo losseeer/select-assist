@@ -115,6 +115,9 @@ if (MODE === 'panel') {
   let settings = null;
   let lastCtx = null;
   let browsing = null; // selected filePath from browser
+  // 'read' = 会话解读 (assemble with context), 'direct' = 选区直通 (raw selection).
+  // Persisted as the withContext boolean; the segmented control is its semantic face.
+  let mode = 'read';
 
   function keyActivate(el, fn) {
     el.addEventListener('keydown', (e) => {
@@ -188,8 +191,8 @@ if (MODE === 'panel') {
     lastCtx = s.context;
     renderSessionLine();
     refreshPackMeta();
-    // a new capture resets the pack — re-fill context when the switch is on
-    if (s.selection?.ok && $('with-ctx').checked && !s.context.agent && !s.context.error) {
+    // a new capture resets the pack — re-fill context when in 会话解读 mode
+    if (s.selection?.ok && mode === 'read' && !s.context.agent && !s.context.error) {
       await refreshContext();
     }
   }
@@ -205,34 +208,62 @@ if (MODE === 'panel') {
 
   function renderSessionLine() {
     const el = $('sum-session');
-    if (!$('with-ctx').checked) { el.textContent = ''; return; }
+    if (mode !== 'read') { el.textContent = ''; return; }
     if (!lastCtx || (!lastCtx.agent && !lastCtx.error)) { el.textContent = '上下文未填充'; return; }
     if (lastCtx.error) { el.textContent = `上下文：${lastCtx.error}`; return; }
     el.textContent = `判定会话：${lastCtx.agent} · ${lastCtx.turnsIncluded} 轮`;
     el.dataset.tip = `会话 id：${lastCtx.sessionId ?? '—'}\n判据：${lastCtx.basis}`;
   }
 
-  // ---------- context ----------
-  let ctxSeq = 0; // last-write-wins guard: a slow attach must not clobber a newer one
-  $('with-ctx').addEventListener('change', async (e) => {
-    // visibility (not display): the button row keeps its slot so the layout never jumps
-    $('ctx-actions').classList.toggle('off', !e.target.checked);
-    if (!e.target.checked) {
+  // ---------- mode (会话解读 / 选区直通) ----------
+  function applyMode() {
+    const read = mode === 'read';
+    $('mode-read').setAttribute('aria-selected', String(read));
+    $('mode-direct').setAttribute('aria-selected', String(!read));
+    // visibility (not display): the ctx row keeps its slot so nothing jumps on switch
+    $('ctx-selects').classList.toggle('off', !read);
+    $('ctx-actions').classList.toggle('off', !read);
+    $('copy').textContent = read ? '复制 Prompt' : '复制选区原文';
+    $('copy').dataset.tip = read
+      ? '组装 Prompt（指令 + 选区 + 对话历史）并复制到剪贴板'
+      : '复制选区逐字节原文，不套模板、不脱敏';
+    document.querySelectorAll('#settings .ctx-only').forEach((el) => el.classList.toggle('hidden', !read));
+    // each mode only configures its own site group; the hidden editor keeps its value for save
+    document.querySelectorAll('#settings .site-edit').forEach((el) => {
+      el.classList.toggle('hidden', el.dataset.for === 'read' ? !read : read);
+    });
+  }
+
+  async function setMode(next) {
+    if (next === mode) return;
+    mode = next;
+    settings = await api.patchSettings({ withContext: mode === 'read' });
+    if (mode === 'read') {
+      await refreshContext();
+    } else {
       ctxSeq++; // invalidate any in-flight attach so it cannot repopulate after clearing
       $('browser').classList.add('hidden');
       lastCtx = null;
       browsing = null;
       await api.clearContext();
       renderSessionLine();
-    } else {
-      await refreshContext();
+      refreshPackMeta();
     }
+    applyMode();
+    renderSites();
     chaseHeight();
-  });
+  }
+  $('mode-read').addEventListener('click', () => setMode('read'));
+  $('mode-direct').addEventListener('click', () => setMode('direct'));
+  keyActivate($('mode-read'), () => setMode('read'));
+  keyActivate($('mode-direct'), () => setMode('direct'));
+
+  // ---------- context ----------
+  let ctxSeq = 0; // last-write-wins guard: a slow attach must not clobber a newer one
   $('ctx-refresh').addEventListener('click', () => refreshContext());
 
   async function refreshContext() {
-    if (!$('with-ctx').checked) return;
+    if (mode !== 'read') return;
     const seq = ++ctxSeq;
     flashStatus('正在填充上下文…');
     const r = await api.attachContext({
@@ -326,14 +357,14 @@ if (MODE === 'panel') {
     const btn = $('copy');
     btn.classList.add('done');
     btn.textContent = '已复制 ✓';
-    setTimeout(() => { btn.classList.remove('done'); btn.textContent = '复制 Prompt'; }, 1200);
+    setTimeout(() => { btn.classList.remove('done'); applyMode(); }, 1200);
     refreshPackMeta();
   });
 
   function renderSites() {
     const wrap = $('sites');
     wrap.innerHTML = '';
-    for (const s of settings.sites) {
+    for (const s of mode === 'read' ? settings.chatSites : settings.directSites) {
       const b = document.createElement('button');
       b.textContent = s.name;
       b.dataset.tip = s.url;
@@ -345,34 +376,46 @@ if (MODE === 'panel') {
   // ---------- settings ----------
   async function init() {
     settings = await api.getSettings();
+    mode = settings.withContext === false ? 'direct' : 'read';
+    applyMode();
     renderSites();
     $('set-prompt').value = settings.promptTemplate ?? '';
     $('set-project').value = settings.projectPath ?? '';
     $('set-redact').checked = !!settings.redactPaths;
-    $('set-sites').value = settings.sites.map((s) => `${s.name}|${s.url}`).join('\n');
+    $('set-chat-sites').value = settings.chatSites.map((s) => `${s.name}|${s.url}`).join('\n');
+    $('set-direct-sites').value = settings.directSites.map((s) => `${s.name}|${s.url}`).join('\n');
     refreshSummary();
   }
   $('settings').addEventListener('input', () => $('set-save').classList.add('dirty'));
   $('set-save').addEventListener('click', async () => {
-    const sites = [];
-    const bad = [];
-    $('set-sites').value.split('\n').forEach((line, i) => {
-      if (!line.trim()) return;
-      const p = line.split('|');
-      const name = p[0]?.trim();
-      const url = p[1]?.trim();
-      if (p.length >= 2 && name && url && /^https?:\/\//i.test(url)) sites.push({ name, url });
-      else bad.push(i + 1);
-    });
+    const parse = (text) => {
+      const sites = [];
+      const bad = [];
+      text.split('\n').forEach((line, i) => {
+        if (!line.trim()) return;
+        const p = line.split('|');
+        const name = p[0]?.trim();
+        const url = p[1]?.trim();
+        if (p.length >= 2 && name && url && /^https?:\/\//i.test(url)) sites.push({ name, url });
+        else bad.push(i + 1);
+      });
+      return { sites, bad };
+    };
+    const chat = parse($('set-chat-sites').value);
+    const direct = parse($('set-direct-sites').value);
     settings = await api.patchSettings({
       promptTemplate: $('set-prompt').value.trim(),
       projectPath: $('set-project').value.trim(),
       redactPaths: $('set-redact').checked,
-      sites: sites.length ? sites : settings.sites,
+      chatSites: chat.sites.length ? chat.sites : settings.chatSites,
+      directSites: direct.sites.length ? direct.sites : settings.directSites,
     });
     renderSites();
     $('set-save').classList.remove('dirty');
-    if (bad.length) flashStatus(`目标站第 ${bad.join('、')} 行无效（需 名称|http(s)://URL），该行未生效`, true);
+    const warn = [];
+    if (chat.bad.length) warn.push(`会话解读第 ${chat.bad.join('、')} 行`);
+    if (direct.bad.length) warn.push(`直通第 ${direct.bad.join('、')} 行`);
+    if (warn.length) flashStatus(`目标站无效（需 名称|http(s)://URL）：${warn.join('，')}，该行未生效`, true);
     else flashStatus('已保存');
   });
 

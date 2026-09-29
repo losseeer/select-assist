@@ -132,6 +132,20 @@ html[data-mode="panel"] body { height: 100vh; }
 #ctx-group, #act-group { display: flex; flex-direction: column; gap: 8px; }
 #ctx-row { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 #ctx-row select { color: var(--fg); }
+/* macOS-style segmented control: the mode choice (会话解读 / 选区直通) */
+#mode-seg {
+  display: inline-flex; gap: 2px; padding: 2px; flex: none;
+  background: var(--fill); border-radius: 7px;
+}
+#mode-seg button {
+  background: transparent; border-radius: 5px; padding: 2px 10px;
+  min-height: 20px; font-size: 12px; color: var(--dim);
+}
+#mode-seg button:hover { background: rgba(255, 255, 255, 0.08); color: var(--fg); }
+#mode-seg button[aria-selected="true"] { background: var(--accent); color: #fff; }
+#mode-seg button[aria-selected="true"]:hover { filter: brightness(1.1); }
+#ctx-selects { display: inline-flex; gap: 6px; }
+#ctx-selects.off { visibility: hidden; } /* keeps its slot: no layout jump on mode switch */
 #ctx-actions { display: flex; gap: 6px; }
 #ctx-actions button { font-size: 12px; padding: 4px 10px; }
 #ctx-actions.off { visibility: hidden; } /* keeps its slot: no layout jump on toggle */
@@ -163,7 +177,7 @@ html[data-mode="panel"] body { height: 100vh; }
 #copy.done { filter: brightness(1.2); transform: scale(1.04); }
 
 /* ---------- settings ---------- */
-#set-sites, #set-prompt {
+#set-chat-sites, #set-direct-sites, #set-prompt {
   background: rgba(0, 0, 0, 0.28); border: none; border-radius: 6px;
   padding: 6px 8px; color: var(--fg); resize: vertical; user-select: text; width: 100%;
 }

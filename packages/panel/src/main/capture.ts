@@ -249,21 +249,19 @@ export class Capturer {
     // clean/v1 renders selection-only packs AS the selection text — using it as
     // context here would duplicate the selection inside the assembled prompt.
     const context = pack.transcript?.length ? (pack.payload ?? '') : '';
-    const selection = pack.selection?.text ?? '';
-    // The template exists to tell an LLM how to read the transcript. With no
-    // context there is nothing to frame, so copy the raw selection verbatim —
-    // this is what makes translate / web-search / paste-anything work.
+    // 直通模式 = 逐字节原文：脱敏只服务于上下文组装，不碰用户自己复制的选区
     if (!context) {
+      const raw = this.pack.selection?.text ?? '';
       return {
-        prompt: selection,
+        prompt: raw,
         context: '',
-        usedChars: selection.length,
-        dropped: [...(pack.limits?.dropped ?? [])],
+        usedChars: raw.length,
+        dropped: [...(this.pack.limits?.dropped ?? [])],
       };
     }
     const { prompt, dropped } = assemblePrompt({
       template: settings.promptTemplate,
-      selection,
+      selection: pack.selection?.text ?? '',
       context,
       maxChars: NO_BUDGET,
     });
