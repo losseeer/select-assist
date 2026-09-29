@@ -1,4 +1,5 @@
 import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import type { TranscriptTurn } from '../types.js';
 import type { SessionRef, TrackBAdapter, TranscriptResult } from './types.js';
@@ -11,7 +12,7 @@ const HEAD_BYTES = 64 * 1024;
 const COMPACT_SUMMARY = /^This session is being continued from a previous conversation/;
 
 function homeDir(home?: string): string {
-  return home ?? process.env.HOME ?? '';
+  return home ?? os.homedir();
 }
 
 async function headRecords(file: string): Promise<Record<string, any>[]> {

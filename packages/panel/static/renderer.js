@@ -309,11 +309,13 @@ if (MODE === 'panel') {
     const el = $('pack-meta');
     const cur = await api.packCurrent();
     if (!cur) { el.textContent = ''; return; }
+    // no context ⇒ the copied text IS the raw selection (nothing was assembled)
+    const noun = cur.context ? '组装后' : '选区原文';
     if (cur.dropped.length) {
-      el.textContent = `组装后 ${cur.usedChars} 字 · 已省略 ${cur.dropped.length} 类`;
+      el.textContent = `${noun} ${cur.usedChars} 字 · 已省略 ${cur.dropped.length} 类`;
       el.dataset.tip = `已省略：${cur.dropped.join('、')}`;
     } else {
-      el.textContent = `组装后 ${cur.usedChars} 字`;
+      el.textContent = `${noun} ${cur.usedChars} 字`;
       el.removeAttribute('data-tip');
     }
   }

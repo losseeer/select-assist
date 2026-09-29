@@ -1,0 +1,35 @@
+# electron-builder config — run from packages/panel: `pnpm dist`
+appId: dev.select-assist.panel
+productName: select-assist
+copyright: © 2026 losseeer
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**
+  - static/**
+  - package.json
+
+asar: true
+npmRebuild: false
+
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+  # self-use: ad-hoc sign only; set CSC_LINK/CSC_KEY_PASSWORD later for a Developer ID
+  forceCodeSigning: false
+
+win:
+  target:
+    - nsis
+    - portable
+
+nsis:
+  oneClick: true
+  perMachine: false
+
+publish: null

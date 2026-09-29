@@ -30,10 +30,11 @@ export const AGENT_CHOICES = ['auto', ...Object.keys(ADAPTERS)] as const;
 /** Resolve which adapter reads an explicitly chosen file; path layout identifies the agent. */
 function adapterForFile(file: string, hint: string): { adapter: TrackBAdapter; agent: string } | undefined {
   if (hint !== 'auto' && ADAPTERS[hint]) return { adapter: ADAPTERS[hint]!, agent: hint };
-  if (file.includes('/.codex/')) return { adapter: ADAPTERS.codex!, agent: 'codex' };
-  if (file.includes('/.workbuddy/')) return { adapter: ADAPTERS.workbuddy!, agent: 'workbuddy' };
-  if (file.includes('/.qoder-cn/') || file.includes('QoderWork')) return { adapter: ADAPTERS.qoder!, agent: 'qoder' };
-  if (file.endsWith('.jsonl')) return { adapter: ADAPTERS['claude-code']!, agent: 'claude-code' };
+  const f = file.replace(/\\/g, '/'); // Windows paths arrive with backslashes
+  if (f.includes('/.codex/')) return { adapter: ADAPTERS.codex!, agent: 'codex' };
+  if (f.includes('/.workbuddy/')) return { adapter: ADAPTERS.workbuddy!, agent: 'workbuddy' };
+  if (f.includes('/.qoder-cn/') || f.includes('QoderWork')) return { adapter: ADAPTERS.qoder!, agent: 'qoder' };
+  if (f.endsWith('.jsonl')) return { adapter: ADAPTERS['claude-code']!, agent: 'claude-code' };
   return undefined;
 }
 
@@ -248,9 +249,21 @@ export class Capturer {
     // clean/v1 renders selection-only packs AS the selection text — using it as
     // context here would duplicate the selection inside the assembled prompt.
     const context = pack.transcript?.length ? (pack.payload ?? '') : '';
+    const selection = pack.selection?.text ?? '';
+    // The template exists to tell an LLM how to read the transcript. With no
+    // context there is nothing to frame, so copy the raw selection verbatim —
+    // this is what makes translate / web-search / paste-anything work.
+    if (!context) {
+      return {
+        prompt: selection,
+        context: '',
+        usedChars: selection.length,
+        dropped: [...(pack.limits?.dropped ?? [])],
+      };
+    }
     const { prompt, dropped } = assemblePrompt({
       template: settings.promptTemplate,
-      selection: pack.selection?.text ?? '',
+      selection,
       context,
       maxChars: NO_BUDGET,
     });

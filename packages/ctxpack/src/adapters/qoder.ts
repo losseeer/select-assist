@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { TranscriptTurn } from '../types.js';
@@ -14,11 +15,11 @@ const SQLITE_ADAPTER = 'qoderwork-sqlite@0';
 const qoderCn: TrackBAdapter = makeJsonlAdapter(
   AGENT,
   'qoder-cn-jsonl@0',
-  (home) => path.join(home ?? process.env.HOME ?? '', '.qoder-cn', 'projects')
+  (home) => path.join(home ?? os.homedir(), '.qoder-cn', 'projects')
 );
 
 function dbPath(home?: string): string {
-  const base = home ?? process.env.HOME ?? '';
+  const base = home ?? os.homedir();
   return path.join(base, 'Library', 'Application Support', 'QoderWork', 'data', 'agents.db');
 }
 

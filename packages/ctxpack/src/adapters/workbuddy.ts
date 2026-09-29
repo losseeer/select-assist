@@ -1,4 +1,5 @@
 import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import type { TranscriptTurn } from '../types.js';
 import type { SessionRef, TrackBAdapter, TranscriptResult } from './types.js';
@@ -9,7 +10,7 @@ const ADAPTER = 'workbuddy-jsonl@0';
 const HEAD_BYTES = 64 * 1024;
 
 function homeDir(home?: string): string {
-  return home ?? process.env.HOME ?? '';
+  return home ?? os.homedir();
 }
 
 async function headRecords(file: string): Promise<Record<string, any>[]> {

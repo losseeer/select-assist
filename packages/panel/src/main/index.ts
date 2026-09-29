@@ -9,6 +9,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CHIP = { width: 400, height: 44 }; // same width as PANEL: expand/collapse is a pure height change
 const PANEL = { width: 400, height: 350 }; // height is the default; autoHeight() adapts it to content
 
+// translucent window material per platform: vibrancy is macOS-only,
+// acrylic covers Win11 (Win10 silently degrades to the opaque page background)
+const MATERIAL: Partial<Electron.BrowserWindowConstructorOptions> =
+  process.platform === 'darwin'
+    ? { vibrancy: 'hud' }
+    : process.platform === 'win32'
+      ? { backgroundMaterial: 'acrylic' }
+      : {};
+
+// dev and packaged builds share one userData dir (productName "select-assist"),
+// so settings and the single-instance lock behave identically
+app.setName('select-assist');
+
 if (!app.requestSingleInstanceLock()) {
   console.error('select-assist panel: 已有一个实例在运行（可能藏在屏幕角落的圆点），本次启动退出。如窗口不可见可执行 pkill -f "select-assist.*Electron" 后重试。');
   app.quit();
@@ -79,7 +92,7 @@ function createWindows(): void {
     ...CHIP,
     frame: false,
     transparent: true,
-    vibrancy: 'hud', // macOS HUD material behind the translucent page; --bg veil keeps text contrast
+    ...MATERIAL, // macOS HUD material behind the translucent page; --bg veil keeps text contrast
     resizable: false,
     movable: true,
     skipTaskbar: true,
@@ -104,7 +117,7 @@ function createWindows(): void {
     ...PANEL,
     frame: false,
     transparent: true,
-    vibrancy: 'hud',
+    ...MATERIAL,
     resizable: false,
     movable: true,
     skipTaskbar: true,

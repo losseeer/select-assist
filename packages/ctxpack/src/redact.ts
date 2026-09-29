@@ -7,7 +7,10 @@ import type { CtxPack } from './types.js';
  */
 export function redactPaths(pack: CtxPack, home = os.homedir()): CtxPack {
   const sub = (s: string): string =>
-    s.split(home).join('~').replace(/\/Users\/[^/\s"]+/g, '~/user');
+    s
+      .split(home).join('~')
+      .replace(/\/Users\/[^/\s"]+/g, '~/user')
+      .replace(/[A-Za-z]:[\\/]Users[\\/][^\s"\\/]+/g, '~\\user'); // Windows C:\Users\name
   const out: CtxPack = JSON.parse(JSON.stringify(pack));
   if (typeof out.payload === 'string') out.payload = sub(out.payload);
   if (out.source?.projectPath) out.source.projectPath = sub(out.source.projectPath);
