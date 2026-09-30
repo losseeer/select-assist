@@ -29,7 +29,7 @@
 ```bash
 pnpm install
 pnpm panel                          # 构建并启动悬浮条
-pnpm --filter @select-assist/panel dist   # 打包本机安装包（electron-builder）
+pnpm --filter @select-assist/panel dist   # （可选 ）打包本机安装包（electron-builder）
 ```
 
 ### 日常流程
