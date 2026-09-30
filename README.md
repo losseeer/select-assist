@@ -16,7 +16,7 @@ pnpm install && pnpm build
 pnpm panel                     # 启动悬浮条（屏幕右上）
 ```
 
-1. 在 agent 界面选中要问的文字，`⌘C`；
+1. 在 agent 界面选中要问的文字，复制；
 2. 点悬浮条「取入选区」（有新复制时右侧会亮提示）；
 3. 需要背景时勾选「附带会话上下文」，自动判定或点「浏览会话」手选；
 4. 点「复制 Prompt」，去 DeepSeek / ChatGPT / Gemini（面板内一键打开）粘贴提问。

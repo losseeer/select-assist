@@ -32,7 +32,10 @@ const MATERIAL: Partial<Electron.BrowserWindowConstructorOptions> =
 app.setName('select-assist');
 
 if (!app.requestSingleInstanceLock()) {
-  console.error('select-assist panel: 已有一个实例在运行（可能藏在屏幕角落的圆点），本次启动退出。如窗口不可见可执行 pkill -f "select-assist.*Electron" 后重试。');
+  const kill = process.platform === 'win32'
+    ? '结束 select-assist.exe（开发版进程名是 electron.exe，注意别误杀其他 Electron 应用）后重试'
+    : '执行 pkill -f "select-assist.*Electron" 后重试';
+  console.error(`select-assist panel: 已有一个实例在运行（可能藏在屏幕角落的圆点），本次启动退出。如窗口不可见，${kill}。`);
   app.quit();
 }
 

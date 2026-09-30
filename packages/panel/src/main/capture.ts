@@ -89,7 +89,7 @@ export class Capturer {
       ? (() => {
           const at = new Date().toISOString();
           // buildPack requires a non-empty selection.text: store the trimmed copy
-          // so a whitespace-only clipboard (e.g. a lone ⌘C on a blank line) cannot throw.
+          // so a whitespace-only clipboard (e.g. copying a blank line) cannot throw.
           this.pack = buildPack({
             selection: { text: text.trim(), role: 'unknown' },
             capture: { via: 'clipboard', at },
@@ -106,7 +106,7 @@ export class Capturer {
             via: 'clipboard',
           };
         })()
-      : { ok: false, reason: '剪贴板为空，请先在源界面 ⌘C 复制选中的文本' };
+      : { ok: false, reason: '剪贴板为空，请先在源界面复制选中的文本' };
     this.selectionSummary = summary;
     return summary;
   }

@@ -83,7 +83,7 @@ if (MODE === 'chip') {
       st.dataset.tip = `来源：剪贴板 · ${new Date(s.selection.captureAt).toLocaleTimeString()} · ${s.selection.chars} 字`;
     } else {
       st.textContent = '还没有选区';
-      st.dataset.tip = '在源界面 ⌘C，再点「取入选区」';
+      st.dataset.tip = '在源界面复制，再点「取入选区」';
     }
   }
 
@@ -186,7 +186,7 @@ if (MODE === 'panel') {
       st.dataset.tip = `来源：剪贴板 · ${new Date(s.selection.captureAt).toLocaleTimeString()} · ${s.selection.chars} 字`;
     } else {
       st.textContent = '还没有选区';
-      st.dataset.tip = '在源界面 ⌘C，再点「取入选区」';
+      st.dataset.tip = '在源界面复制，再点「取入选区」';
     }
     lastCtx = s.context;
     renderSessionLine();
