@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { TranscriptTurn } from '../types.js';
 import type { SessionRef, TrackBAdapter, TranscriptResult } from './types.js';
-import { parseJsonLines, stripSynthetic, mergeTurns } from './util.js';
+import { parseJsonLines, stripSynthetic, mergeTurns, byCwd } from './util.js';
 
 const AGENT = 'workbuddy';
 const ADAPTER = 'workbuddy-jsonl@0';
@@ -97,10 +97,7 @@ export const workbuddyAdapter: TrackBAdapter = {
       }
     }
     refs.sort((a, b) => b.mtimeMs - a.mtimeMs);
-    const matched = cwd
-      ? refs.filter((r) => r.projectPath === cwd || r.projectPath?.startsWith(cwd + path.sep))
-      : refs;
-    return (matched.length > 0 ? matched : refs).slice(0, limit);
+    return byCwd(refs, cwd, limit);
   },
 
   async readTranscript(ref: SessionRef): Promise<TranscriptResult> {

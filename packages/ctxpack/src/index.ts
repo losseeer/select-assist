@@ -9,9 +9,9 @@ export { claudeCodeAdapter } from './adapters/claude-code.js';
 export { codexAdapter } from './adapters/codex.js';
 export { workbuddyAdapter } from './adapters/workbuddy.js';
 export { qoderAdapter } from './adapters/qoder.js';
-export { stripSynthetic } from './adapters/util.js';
+export { stripSynthetic, matchCwd } from './adapters/util.js';
 
-import * as path from 'node:path';
+import { matchCwd } from './adapters/util.js';
 import type { SessionRef } from './adapters/types.js';
 
 /**
@@ -24,9 +24,12 @@ export function pickSession(
 ): { ref: SessionRef; basis: string } | undefined {
   if (refs.length === 0) return undefined;
   if (cwd) {
-    const exact = refs.find((r) => r.projectPath === cwd);
-    if (exact) return { ref: exact, basis: `cwd 精确匹配 ${cwd}` };
-    const under = refs.find((r) => r.projectPath?.startsWith(cwd + path.sep));
+    let under: SessionRef | undefined;
+    for (const ref of refs) {
+      const m = matchCwd(ref.projectPath, cwd);
+      if (m === 'exact') return { ref, basis: `cwd 精确匹配 ${ref.projectPath}` };
+      if (m === 'under') under ??= ref;
+    }
     if (under) return { ref: under, basis: `cwd 前缀匹配 ${under.projectPath}` };
   }
   return {

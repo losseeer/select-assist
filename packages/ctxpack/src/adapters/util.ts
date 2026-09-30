@@ -1,3 +1,5 @@
+import type { SessionRef } from './types.js';
+
 export function parseJsonLines(text: string): { records: Record<string, any>[]; bad: number } {
   const records: Record<string, any>[] = [];
   let bad = 0;
@@ -61,4 +63,36 @@ export function mergeTurns(
     else merged.push({ role: t.role, text: t.text, seq: merged.length });
   }
   return merged;
+}
+
+export type CwdMatch = 'exact' | 'under';
+
+/**
+ * Does a session's recorded project path belong to `cwd`?
+ *
+ * Windows logs the same directory two ways: agents write a lowercase drive
+ * (`d:\prj`) while users type `D:\prj`, and either separator shows up. The
+ * drive letter — not process.platform — decides whether to fold case, so POSIX
+ * paths stay case-sensitive and one rule holds on every OS.
+ */
+export function matchCwd(projectPath: string | undefined, cwd?: string): CwdMatch | undefined {
+  if (!cwd || !projectPath) return undefined;
+  const canon = (p: string): string => {
+    let s = p.replace(/\\/g, '/');
+    if (s.length > 1) s = s.replace(/\/+$/, '');
+    return /^[a-z]:\//i.test(s) ? s.toLowerCase() : s;
+  };
+  const [p, c] = [canon(projectPath), canon(cwd)];
+  if (p === c) return 'exact';
+  return p.startsWith(c + '/') ? 'under' : undefined;
+}
+
+/**
+ * Newest-first refs narrowed to `cwd`. Discovery stays generous: a session file
+ * that predates a moved or renamed project must still surface rather than return
+ * nothing, so a miss falls back to the full list.
+ */
+export function byCwd(refs: SessionRef[], cwd: string | undefined, limit: number): SessionRef[] {
+  const matched = cwd ? refs.filter((r) => matchCwd(r.projectPath, cwd)) : refs;
+  return (matched.length > 0 ? matched : refs).slice(0, limit);
 }

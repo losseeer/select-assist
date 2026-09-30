@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { TranscriptTurn } from '../types.js';
 import type { SessionRef, TrackBAdapter, TranscriptResult } from './types.js';
-import { stripSynthetic, mergeTurns } from './util.js';
+import { stripSynthetic, mergeTurns, byCwd } from './util.js';
 import { makeJsonlAdapter } from './claude-code.js';
 
 const AGENT = 'qoder';
@@ -18,9 +18,20 @@ const qoderCn: TrackBAdapter = makeJsonlAdapter(
   (home) => path.join(home ?? os.homedir(), '.qoder-cn', 'projects')
 );
 
+/**
+ * QoderWork is an Electron app, so its userData dir is platform-specific:
+ * ~/Library/Application Support on macOS, %APPDATA% on Windows, ~/.config on Linux.
+ * The `home` test hook always means the macOS layout, which is what the fixtures build.
+ */
 function dbPath(home?: string): string {
-  const base = home ?? os.homedir();
-  return path.join(base, 'Library', 'Application Support', 'QoderWork', 'data', 'agents.db');
+  const supportDir = home
+    ? path.join(home, 'Library', 'Application Support')
+    : process.platform === 'win32'
+      ? process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming')
+      : process.platform === 'darwin'
+        ? path.join(os.homedir(), 'Library', 'Application Support')
+        : process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config');
+  return path.join(supportDir, 'QoderWork', 'data', 'agents.db');
 }
 
 /** timestamps come as epoch seconds (or ms in some builds) */
@@ -97,10 +108,7 @@ const qoderWork: TrackBAdapter = {
     } finally {
       db.close();
     }
-    const matched = cwd
-      ? refs.filter((r) => r.projectPath === cwd || r.projectPath?.startsWith(cwd + path.sep))
-      : refs;
-    return (matched.length > 0 ? matched : refs).slice(0, limit);
+    return byCwd(refs, cwd, limit);
   },
 
   async readTranscript(ref: SessionRef): Promise<TranscriptResult> {

@@ -86,22 +86,7 @@ export function makeFixtureHome() {
   fs.writeFileSync(path.join(wbDir, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl'), wb.map((r) => JSON.stringify(r)).join('\n') + '\n');
 
   // ---- Qoder (QoderWork agents.db, sqlite) ----
-  const qDir = path.join(home, 'Library', 'Application Support', 'QoderWork', 'data');
-  fs.mkdirSync(qDir, { recursive: true });
-  const db = new DatabaseSync(path.join(qDir, 'agents.db'));
-  db.exec(`
-    create table projects (id text primary key, name text, path text, created_at integer, updated_at integer);
-    create table chats (id text primary key, name text, project_id text, created_at integer, updated_at integer, deleted_at integer);
-    create table messages (id text primary key, message_id text, chat_id text, sub_chat_id text, sequence integer, role text, parts text, created_at integer);
-  `);
-  const nowSec = Math.floor(Date.now() / 1000);
-  db.prepare('insert into projects values (?,?,?,?,?)').run('p1', 'prj', cwd, nowSec, nowSec);
-  db.prepare('insert into chats values (?,?,?,?,?,?)').run('chat1', '面试准备', 'p1', nowSec - 100, nowSec, null);
-  const ins = db.prepare('insert into messages values (?,?,?,?,?,?,?,?)');
-  ins.run('m1', 'mm1', 'chat1', 's1', 1, 'user', JSON.stringify([{ type: 'text', text: '围绕项目向我提问' }]), nowSec);
-  ins.run('m2', 'mm2', 'chat1', 's1', 2, 'assistant', JSON.stringify([{ type: 'tool-Thinking', input: { text: 'PRIVATE' } }, { type: 'text', text: '好的，第一个问题：' }]), nowSec);
-  ins.run('m3', 'mm3', 'chat1', 's1', 3, 'assistant', JSON.stringify([{ type: 'error', text: 'MUST NOT APPEAR' }]), nowSec);
-  db.close();
+  writeQoderWorkDb(path.join(home, 'Library', 'Application Support', 'QoderWork', 'data'), cwd);
 
   // ---- Qoder CN IDE (~/.qoder-cn/projects, Claude-style JSONL) ----
   const qcDir = path.join(home, '.qoder-cn', 'projects', '-Users-x-Dev-prj');
@@ -123,4 +108,23 @@ export function makeFixtureHome() {
   fs.writeFileSync(path.join(qcDir, qcUuid + '.jsonl'), qc.map((r) => JSON.stringify(r)).join('\n') + '\n');
 
   return home;
+}
+
+/** @param dataDir the directory QoderWork's Electron userData layout calls `data` */
+export function writeQoderWorkDb(dataDir, cwd) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  const db = new DatabaseSync(path.join(dataDir, 'agents.db'));
+  db.exec(`
+    create table projects (id text primary key, name text, path text, created_at integer, updated_at integer);
+    create table chats (id text primary key, name text, project_id text, created_at integer, updated_at integer, deleted_at integer);
+    create table messages (id text primary key, message_id text, chat_id text, sub_chat_id text, sequence integer, role text, parts text, created_at integer);
+  `);
+  const nowSec = Math.floor(Date.now() / 1000);
+  db.prepare('insert into projects values (?,?,?,?,?)').run('p1', 'prj', cwd, nowSec, nowSec);
+  db.prepare('insert into chats values (?,?,?,?,?,?)').run('chat1', '面试准备', 'p1', nowSec - 100, nowSec, null);
+  const ins = db.prepare('insert into messages values (?,?,?,?,?,?,?,?)');
+  ins.run('m1', 'mm1', 'chat1', 's1', 1, 'user', JSON.stringify([{ type: 'text', text: '围绕项目向我提问' }]), nowSec);
+  ins.run('m2', 'mm2', 'chat1', 's1', 2, 'assistant', JSON.stringify([{ type: 'tool-Thinking', input: { text: 'PRIVATE' } }, { type: 'text', text: '好的，第一个问题：' }]), nowSec);
+  ins.run('m3', 'mm3', 'chat1', 's1', 3, 'assistant', JSON.stringify([{ type: 'error', text: 'MUST NOT APPEAR' }]), nowSec);
+  db.close();
 }

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, ipcMain, screen, shell } from 'electron';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SettingsStore } from './settings.js';
@@ -9,13 +10,21 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CHIP = { width: 400, height: 44 }; // same width as PANEL: expand/collapse is a pure height change
 const PANEL = { width: 400, height: 350 }; // height is the default; autoHeight() adapts it to content
 
-// translucent window material per platform: vibrancy is macOS-only,
-// acrylic covers Win11 (Win10 silently degrades to the opaque page background)
+// DWM system backdrops (acrylic/mica/tabbed) are Windows 11 only (build 22000+); on Windows 10
+// the option degrades silently, so that path keeps the plain transparent window it had before.
+// A backdrop also enforces a 64 physical-px minimum height on a transparent:true window: the
+// 44px chip would report 44 to Electron while the OS window is 64, and the extra 20px paints as
+// a light band under the bar. Making the window opaque lifts that minimum while the backdrop
+// still shows through the page's alpha — but Electron then paints any backgroundColor over the
+// backdrop, so none may be set. Corner clipping comes from Electron's default
+// roundedCorners:true, which is what keeps the card's corners from turning into black wedges,
+// so it must not be switched off here.
+const hasBackdrop = process.platform === 'win32' && Number(/(\d+)\.(\d+)\.(\d+)/.exec(os.release())?.[3]) >= 22000;
 const MATERIAL: Partial<Electron.BrowserWindowConstructorOptions> =
   process.platform === 'darwin'
     ? { vibrancy: 'hud' }
-    : process.platform === 'win32'
-      ? { backgroundMaterial: 'acrylic' }
+    : hasBackdrop
+      ? { transparent: false, backgroundMaterial: 'acrylic' }
       : {};
 
 // dev and packaged builds share one userData dir (productName "select-assist"),
@@ -53,12 +62,6 @@ function safeSend(w: BrowserWindow | undefined, channel: string, ...args: unknow
   }
 }
 
-/**
- * Two windows instead of resizing one: the chip stays focusable:false
- * (non-activating) forever, the panel is a normal focusable window that is
- * shown/hidden. This removes both the setFocusable toggle and the transparent
- * resize repaint bug that made the panel "disappear".
- */
 function basePrefs(): Electron.WebPreferences {
   return {
     preload: path.join(__dirname, '../preload.js'),
@@ -85,6 +88,12 @@ function defaultChipPos(): { x: number; y: number } {
   return { x: clamped.x, y: clamped.y };
 }
 
+/**
+ * Two windows instead of resizing one: the chip stays focusable:false (non-activating)
+ * forever, the panel is a normal focusable window that is shown/hidden. That removes both
+ * the setFocusable toggle and the transparent-resize repaint bug that made the panel
+ * "disappear" when macOS grew its window.
+ */
 function createWindows(): void {
   const pos = defaultChipPos();
   chipWin = new BrowserWindow({

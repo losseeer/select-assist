@@ -1,9 +1,10 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
-import { claudeCodeAdapter, codexAdapter, workbuddyAdapter, qoderAdapter, pickSession } from '../dist/index.js';
-import { makeFixtureHome } from './fixtures.mjs';
+import { claudeCodeAdapter, codexAdapter, workbuddyAdapter, qoderAdapter, pickSession, matchCwd } from '../dist/index.js';
+import { makeFixtureHome, writeQoderWorkDb } from './fixtures.mjs';
 
 let home;
 let cwd;
@@ -137,4 +138,67 @@ test('corrupt file degrades with error, not throw', async () => {
   const res = await claudeCodeAdapter.readTranscript(ref);
   assert.ok(res.error, 'must report a reason');
   assert.deepEqual(res.turns, []);
+});
+
+test('matchCwd folds drive case and separators, but never POSIX case', () => {
+  const stored = 'd:\\Projects\\prj';
+  assert.equal(matchCwd(stored, 'D:\\Projects\\prj'), 'exact', 'agents log a lowercase drive, users type uppercase');
+  assert.equal(matchCwd(stored, 'D:/Projects/prj/'), 'exact', 'either separator, optional trailing slash');
+  assert.equal(matchCwd('D:\\Projects\\prj', stored), 'exact', 'folding is symmetric');
+  assert.equal(matchCwd('D:\\Projects\\prj\\sub', 'D:\\Projects\\prj'), 'under');
+  assert.equal(matchCwd('d:\\projects', 'd:\\'), 'under', 'drive root');
+  assert.equal(matchCwd(stored, 'D:\\Projects\\prj\\sub'), undefined, 'a parent of cwd is not in it');
+  assert.equal(matchCwd('/Users/X/prj', '/users/x/prj'), undefined, 'POSIX stays case-sensitive');
+  assert.equal(matchCwd('/Users/x/prj/sub', '/Users/x/prj'), 'under');
+  assert.equal(matchCwd(undefined, 'd:\\x'), undefined);
+  assert.equal(matchCwd('d:\\x', undefined), undefined);
+});
+
+test('pickSession: an uppercase cwd still finds the lowercase-logged session', () => {
+  const refs = [
+    { agent: 'qoder', adapter: 'a', filePath: 'q.jsonl', projectPath: 'D:\\Projects\\other', mtimeMs: 9 },
+    { agent: 'claude-code', adapter: 'b', filePath: 'c.jsonl', projectPath: 'd:\\projects\\prj', mtimeMs: 8 },
+  ];
+  const pick = pickSession(refs, 'D:\\Projects\\prj\\');
+  assert.equal(pick.ref.agent, 'claude-code', 'must not fall through to the newer, unrelated session');
+  assert.match(pick.basis, /精确匹配/);
+});
+
+test('qoder: on Windows the QoderWork db is under %APPDATA%, not ~/Library', async () => {
+  const appData = fs.mkdtempSync(path.join(os.tmpdir(), 'ctxpack-appdata-'));
+  const emptyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ctxpack-empty-home-'));
+  const winCwd = 'd:\\Projects\\prj';
+  writeQoderWorkDb(path.join(appData, 'QoderWork', 'data'), winCwd);
+
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  const env = { APPDATA: process.env.APPDATA, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  const restore = () => {
+    Object.defineProperty(process, 'platform', platform);
+    for (const [k, v] of Object.entries(env)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    fs.rmSync(appData, { recursive: true, force: true });
+    fs.rmSync(emptyHome, { recursive: true, force: true });
+  };
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+  process.env.APPDATA = appData;
+  process.env.HOME = emptyHome; // keep the CN jsonl half of the adapter off the real profile
+  process.env.USERPROFILE = emptyHome;
+  try {
+    const refs = await qoderAdapter.discoverSessions({ limit: 5 });
+    const sqlite = refs.filter((r) => r.adapter.startsWith('qoderwork'));
+    assert.equal(sqlite.length, 1);
+    assert.equal(sqlite[0].filePath, path.join(appData, 'QoderWork', 'data', 'agents.db'));
+    assert.equal(sqlite[0].projectPath, winCwd);
+    assert.equal(sqlite[0].name, '面试准备');
+    const { turns, error } = await qoderAdapter.readTranscript(sqlite[0]);
+    assert.equal(error, undefined);
+    assert.deepEqual(turns.map((t) => [t.role, t.text]), [
+      ['user', '围绕项目向我提问'],
+      ['assistant', '好的，第一个问题：'],
+    ]);
+  } finally {
+    restore();
+  }
 });
