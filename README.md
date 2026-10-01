@@ -5,7 +5,7 @@
 [![stars](https://img.shields.io/github/stars/losseeer/select-assist?style=social)](https://github.com/losseeer/select-assist)
 ![PRs](https://img.shields.io/badge/PRs-welcome-brightgreen)
 
-[简体中文](README.md) | [English](README.en.md)
+简体中文 | [English](README-en.md)
 
 在任意 agent 界面选中文本 → 点一下取入悬浮面板：可以带上会话上下文组装成 Prompt 去问免费网页模型（**会话解读**），也可以拿到逐字节原文直接翻译、搜索或粘贴到任何地方（**选区直通**）。拉取式、可见可控，不污染原会话，不消耗已配置的 API key。
 

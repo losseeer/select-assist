@@ -5,7 +5,7 @@
 [![stars](https://img.shields.io/github/stars/losseeer/select-assist?style=social)](https://github.com/losseeer/select-assist)
 ![PRs](https://img.shields.io/badge/PRs-welcome-brightgreen)
 
-简体中文 | [English](README.en.md)
+[简体中文](README.md) | English
 
 Select text in any agent UI → one click to pull it into a floating panel: assemble it with your agent conversation context into a prompt for free web models (**Explain**), or get the byte-exact original text for translating, searching, or pasting anywhere (**Passthrough**). Pull-only, visible and controllable — never pollutes the original session, never spends your configured API keys.
 
