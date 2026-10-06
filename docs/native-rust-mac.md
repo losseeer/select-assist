@@ -1,18 +1,8 @@
 # 原生 Rust + AppKit 重构方案（分支实验，不替换 Electron 版）
 
-> 交接文档：在**新会话**中让 agent 读本文件执行。目标平台 macOS（Apple Silicon）。
-> 后续 Windows 原生版另开分支（Win32/Direct2D 或 webview），本文件不涉及。
-
-## 0. 结论与预期
-
-- **可行**。objc2（objc2-app-kit / objc2-foundation）已覆盖本项目所需全部 API；本项目 UI 元素少且全是标准控件，原生实现比自绘引擎更省事。
-- 内存预期：**RSS 10–20MB 现实可达，<10MB 激进但可能**（AppKit 进程基线约 8–12MB， rusqlite/serde 增量很小）。验收以 `ps -o rss` 空闲 5 分钟均值为准。
-- 代价：开发速度显著慢于 Electron（unsafe FFI 样板、无 CDP 调试）；视觉打磨靠原生控件默认样式反而更"macOS 味"。
-
 ## 1. 分支与仓库布局
 
 ```bash
-# 前提：先把 main 上未提交的 README 改动 commit/push（用户自己推）
 git checkout -b native/rust-mac main
 ```
 
@@ -97,7 +87,3 @@ dirs = "6"                                                 # home dir
 - AppKit 细节坑：非激活面板的首击语义、`NSPanel` 默认关窗即释放（`isReleasedWhenAnimated=false`）、vibrancy 下自绘文字对比度（沿用现有 `--bg` 遮罩思路加半透明层）。
 - 双版本共存写同一 settings.json：开发期约定"跑原生版前先退 Electron 版"；若长期共存，再加文件锁或分文件。
 - Windows 原生分支**暂不启动**，等 macOS 分支到 M4 验证路线成立后再立项。
-
-## 8. 新会话开工指令建议
-
-> 读 `docs/native-rust-mac.md`，当前分支 native/rust-mac，从 M0 开始：初始化 native/ Cargo 工程（依赖见 §2），实现 §3 表中 chip 窗口的 NSPanel 版本，验收 M0 条目。不要动 packages/ 下任何文件。
