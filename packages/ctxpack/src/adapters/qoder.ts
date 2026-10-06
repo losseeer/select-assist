@@ -34,6 +34,11 @@ function dbPath(home?: string): string {
   return path.join(supportDir, 'QoderWork', 'data', 'agents.db');
 }
 
+/** QoderWork's userData agents.db location (platform-specific); exported so the panel can offer it as a default config path */
+export function qoderWorkDbPath(home?: string): string {
+  return dbPath(home);
+}
+
 /** timestamps come as epoch seconds (or ms in some builds) */
 function toMs(v: unknown): number {
   const n = Number(v) || 0;
@@ -64,8 +69,8 @@ const qoderWork: TrackBAdapter = {
   adapter: SQLITE_ADAPTER,
 
   async discoverSessions(opts = {}): Promise<SessionRef[]> {
-    const { cwd, limit = 20, home } = opts;
-    const file = dbPath(home);
+    const { cwd, limit = 20, home, root } = opts;
+    const file = root ?? dbPath(home);
     if (!fs.existsSync(file)) return [];
     const refs: SessionRef[] = [];
     let db: DatabaseSync;
@@ -161,7 +166,12 @@ export const qoderAdapter: TrackBAdapter = {
   adapter: ADAPTER,
 
   async discoverSessions(opts = {}): Promise<SessionRef[]> {
-    const { limit = 20 } = opts;
+    const { limit = 20, root } = opts;
+    // an explicit root addresses exactly one of the two qoder stores
+    if (root) {
+      const one = root.endsWith('.db') ? qoderWork : qoderCn;
+      return one.discoverSessions({ ...opts, limit });
+    }
     const [cn, work] = await Promise.all([
       qoderCn.discoverSessions({ ...opts, limit }).catch(() => [] as SessionRef[]),
       qoderWork.discoverSessions({ ...opts, limit }).catch(() => [] as SessionRef[]),

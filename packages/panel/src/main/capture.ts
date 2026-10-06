@@ -16,7 +16,7 @@ import {
 import { clipboard } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { Settings } from './settings.js';
+import { activePromptTemplate, type Settings } from './settings.js';
 
 const ADAPTERS: Record<string, TrackBAdapter> = {
   'claude-code': claudeCodeAdapter,
@@ -121,7 +121,8 @@ export class Capturer {
     opts: { agent: string; turns: number; filePath?: string; sessionId?: string },
   ): Promise<ContextSummary> {
     if (!this.pack) return (this.context = { error: '请先取入选区' });
-    const cwd = settings.projectPath || undefined;
+    // 'project' entries are cwd hints; other entries are concrete sessions folded in below
+    const cwd = settings.sessionPaths.find((p) => p.agent === 'project')?.path || undefined;
     // a project path pointing at a .jsonl file is a direct session pick
     const directFile = opts.filePath ?? (cwd?.endsWith('.jsonl') ? cwd : undefined);
 
@@ -146,7 +147,7 @@ export class Capturer {
       };
     } else {
       try {
-        const candidates = await this.discover(opts.agent, cwd);
+        const candidates = await this.discover(opts.agent, cwd, settings);
         const pick = pickSession(
           candidates.map((c) => c.ref),
           cwd,
@@ -164,8 +165,9 @@ export class Capturer {
 
     const result = await chosen.adapter.readTranscript(chosen.ref);
     const base = this.pack;
-    // one 轮 = one user + one assistant exchange
-    const turns: TranscriptTurn[] = result.turns.slice(-Math.max(1, opts.turns) * 2);
+    // one 轮 = one user + one assistant exchange; turns <= 0 means 全部（不截取）
+    const turns: TranscriptTurn[] =
+      opts.turns > 0 ? result.turns.slice(-opts.turns * 2) : result.turns;
     const droppedDefaults = [
       ...(result.error ? [`adapter-error:${result.error}`, ...result.dropped] : result.dropped),
     ];
@@ -210,16 +212,15 @@ export class Capturer {
     this.context = {};
   }
 
-  /** Cross-agent session browser: everything discoverable, newest first. */
-  async browse(limit = 40): Promise<BrowseEntry[]> {
-    const all: { ref: SessionRef }[] = [];
-    for (const adapter of Object.values(ADAPTERS)) {
-      try {
-        for (const ref of await adapter.discoverSessions({ limit: 15 })) all.push({ ref });
-      } catch {
-        /* one broken agent must not break the browser */
-      }
-    }
+  /** Cross-agent session browser: exactly what 设置→会话路径 lists, newest first. */
+  async browse(settings: Settings, limit = 40): Promise<BrowseEntry[]> {
+    const seen = new Set<string>();
+    const all = (await this.userCandidates(settings)).filter((c) => {
+      const key = `${c.ref.filePath}#${c.ref.sessionId ?? ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
     all.sort((a, b) => b.ref.mtimeMs - a.ref.mtimeMs);
     return all.slice(0, limit).map(({ ref }) => ({
       agent: ref.agent,
@@ -260,7 +261,7 @@ export class Capturer {
       };
     }
     const { prompt, dropped } = assemblePrompt({
-      template: settings.promptTemplate,
+      template: activePromptTemplate(settings),
       selection: pack.selection?.text ?? '',
       context,
       maxChars: NO_BUDGET,
@@ -282,20 +283,96 @@ export class Capturer {
 
   private async discover(
     agent: string,
+    cwd: string | undefined,
+    settings: Settings,
+  ): Promise<{ adapter: TrackBAdapter; ref: SessionRef }[]> {
+    let cands = await this.userCandidates(settings, cwd);
+    if (agent !== 'auto') cands = cands.filter((c) => c.ref.agent === agent);
+    cands.sort((a, b) => b.ref.mtimeMs - a.ref.mtimeMs);
+    return cands;
+  }
+
+  /**
+   * 设置→会话路径 is the ONLY discovery source. A named-agent entry runs that adapter with
+   * root=path (so each adapter still parses its own layout: codex date dirs, qoder's sqlite…);
+   * an 'auto' entry gets a generic *.jsonl scan classified by path.
+   */
+  private async userCandidates(
+    settings: Settings,
     cwd?: string,
   ): Promise<{ adapter: TrackBAdapter; ref: SessionRef }[]> {
-    const names = agent === 'auto' ? Object.keys(ADAPTERS) : [agent];
     const out: { adapter: TrackBAdapter; ref: SessionRef }[] = [];
-    for (const n of names) {
-      const adapter = ADAPTERS[n];
-      if (!adapter) continue;
+    const seen = new Set<string>();
+    const push = (c: { adapter: TrackBAdapter; ref: SessionRef }) => {
+      const key = `${c.ref.filePath}#${c.ref.sessionId ?? ''}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(c);
+    };
+    for (const entry of settings.sessionPaths) {
+      if (!entry.path || entry.agent === 'project') continue;
+      let st: fs.Stats;
       try {
-        for (const ref of await adapter.discoverSessions({ cwd, limit: 10 })) out.push({ adapter, ref });
+        st = await fs.promises.stat(entry.path);
       } catch {
-        /* agent home dir missing etc. — try the next one */
+        continue; // 路径失效：跳过，不打断发现流程
+      }
+      const named = ADAPTERS[entry.agent];
+      if (named) {
+        try {
+          if (st.isFile() && entry.path.endsWith('.jsonl')) {
+            push({ adapter: named, ref: await fileRef(named, entry.path) });
+          } else {
+            // directories AND .db files: the adapter knows its own layout under this root
+            for (const ref of await named.discoverSessions({ root: entry.path, cwd, limit: 15 })) {
+              push({ adapter: named, ref });
+            }
+          }
+        } catch {
+          /* one broken source must not break discovery */
+        }
+        continue;
+      }
+      // 'auto' (or an unknown token): generic scan, classify by path shape
+      const files = st.isFile() ? [entry.path] : await scanJsonl(entry.path, 2);
+      for (const f of files) {
+        const owner = adapterForFile(f, 'auto');
+        if (!owner) continue;
+        try {
+          push({ adapter: owner.adapter, ref: await fileRef(owner.adapter, f, owner.agent) });
+        } catch {
+          /* skip unreadable file */
+        }
       }
     }
-    out.sort((a, b) => b.ref.mtimeMs - a.ref.mtimeMs);
     return out;
   }
+}
+
+async function fileRef(adapter: TrackBAdapter, file: string, agent?: string): Promise<SessionRef> {
+  const base = path.basename(file).replace(/\.(jsonl|db)$/, '');
+  return {
+    agent: agent ?? adapter.agent,
+    adapter: adapter.adapter,
+    filePath: file,
+    sessionId: /^[0-9a-f-]{36}$/.test(base) ? base : undefined,
+    mtimeMs: (await fs.promises.stat(file)).mtimeMs,
+  };
+}
+
+async function scanJsonl(dir: string, depth: number): Promise<string[]> {
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isFile() && e.name.endsWith('.jsonl')) out.push(p);
+    else if (e.isDirectory() && depth > 0) out.push(...(await scanJsonl(p, depth - 1)));
+    if (out.length >= 200) break; // 单条目录上限，防呆
+  }
+  return out.slice(0, 200);
 }

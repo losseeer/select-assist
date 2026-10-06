@@ -202,3 +202,20 @@ test('qoder: on Windows the QoderWork db is under %APPDATA%, not ~/Library', asy
     restore();
   }
 });
+
+test('root override: discovery scans the configured location, not the built-in default', async () => {
+  const refs = await codexAdapter.discoverSessions({ root: path.join(home, '.codex', 'sessions') });
+  assert.equal(refs.length, 1, 'codex root walks its date dirs as before');
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'ctxpack-root-'));
+  try {
+    assert.equal((await claudeCodeAdapter.discoverSessions({ root: empty, home })).length, 0, 'root wins over home default');
+  } finally {
+    fs.rmSync(empty, { recursive: true, force: true });
+  }
+  const cn = await qoderAdapter.discoverSessions({ root: path.join(home, '.qoder-cn', 'projects') });
+  assert.ok(cn.length > 0 && cn.every((r) => r.adapter.startsWith('qoder-cn')), 'qoder dir root = cn store only');
+  const db = await qoderAdapter.discoverSessions({
+    root: path.join(home, 'Library', 'Application Support', 'QoderWork', 'data', 'agents.db'),
+  });
+  assert.ok(db.length >= 1 && db.every((r) => r.adapter.startsWith('qoderwork')), 'qoder .db root = sqlite store only');
+});

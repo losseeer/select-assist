@@ -222,11 +222,14 @@ if (MODE === 'panel') {
     $('mode-direct').setAttribute('aria-selected', String(!read));
     // visibility (not display): the ctx row keeps its slot so nothing jumps on switch
     $('ctx-selects').classList.toggle('off', !read);
-    $('ctx-actions').classList.toggle('off', !read);
+    // 直通模式没有上下文区：彻底移除（display:none）而不是占位隐藏，否则面板中部出现大片空白
+    $('ctx-actions').classList.toggle('hidden', !read);
+    $('sum-session').classList.toggle('hidden', !read);
+    // the picker must not hold a slot in 直通: the whole actions row differs per mode anyway
+    $('prompt-pick').classList.toggle('hidden', !read);
     $('copy').textContent = read ? '复制 Prompt' : '复制选区原文';
-    $('copy').dataset.tip = read
-      ? '组装 Prompt（指令 + 选区 + 对话历史）并复制到剪贴板'
-      : '复制选区逐字节原文，不套模板、不脱敏';
+    if (read) $('copy').dataset.tip = '指令 + 选区 + 历史，一次复制';
+    else delete $('copy').dataset.tip;
     document.querySelectorAll('#settings .ctx-only').forEach((el) => el.classList.toggle('hidden', !read));
     // each mode only configures its own site group; the hidden editor keeps its value for save
     document.querySelectorAll('#settings .site-edit').forEach((el) => {
@@ -268,7 +271,7 @@ if (MODE === 'panel') {
     flashStatus('正在填充上下文…');
     const r = await api.attachContext({
       agent: browsing ? browsing.agent : $('ctx-agent').value,
-      turns: Number($('ctx-turns').value),
+      turns: $('ctx-turns').value === 'all' ? 0 : Number($('ctx-turns').value),
       filePath: browsing?.filePath,
       sessionId: browsing?.sessionId,
     });
@@ -307,7 +310,7 @@ if (MODE === 'panel') {
       div.className = 'br-item';
       div.tabIndex = 0;
       div.setAttribute('role', 'option');
-      div.dataset.tip = `点击使用此会话\n\`${e.filePath}\``;
+      div.dataset.tip = e.filePath;
       const nm = e.name || (e.projectPath ? e.projectPath.split('/').pop() : (e.sessionId ?? '').slice(0, 8));
       const sid = e.sessionId ? `#${e.sessionId.slice(0, 8)}` : '';
       div.innerHTML = `<div class="l1"><span class="ag">${e.agent}${sid}</span><span class="nm"></span><span class="mt">${new Date(e.mtime).toLocaleString()}</span></div><div class="pv"></div>`;
@@ -373,22 +376,103 @@ if (MODE === 'panel') {
     }
   }
 
+  // ---------- 提问指令：主视图选择器 ----------
+  function renderPromptPick() {
+    const sel = $('prompt-pick');
+    sel.innerHTML = '';
+    settings.prompts.forEach((p, i) => {
+      const o = document.createElement('option');
+      o.value = String(i);
+      o.textContent = p.name || `指令 ${i + 1}`;
+      sel.appendChild(o);
+    });
+    sel.value = String(Math.min(settings.activePrompt, settings.prompts.length - 1));
+  }
+  $('prompt-pick').addEventListener('change', async () => {
+    settings = await api.patchSettings({ activePrompt: Number($('prompt-pick').value) });
+    refreshPackMeta();
+  });
+
+  // ---------- 提问指令编辑器：下拉选 + 单个模板框（草稿随保存写回） ----------
+  let promptDraft = [];
+  let editSel = 0;
+
+  function renderPromptEdit() {
+    const sel = $('pe-pick');
+    sel.innerHTML = '';
+    promptDraft.forEach((p, i) => {
+      const o = document.createElement('option');
+      o.value = String(i);
+      o.textContent = p.name;
+      sel.appendChild(o);
+    });
+    sel.value = String(editSel);
+    $('pe-tpl').value = promptDraft[editSel]?.template ?? '';
+    $('pe-count').textContent = promptDraft.length ? `${editSel + 1} / ${promptDraft.length}` : '';
+  }
+  function commitTpl() {
+    const cur = promptDraft[editSel];
+    if (cur) cur.template = $('pe-tpl').value.trim();
+  }
+  function loadPromptEdit() {
+    promptDraft = settings.prompts.map((p) => ({ ...p }));
+    editSel = Math.min(Math.max(settings.activePrompt, 0), promptDraft.length - 1);
+    renderPromptEdit();
+  }
+  $('pe-pick').addEventListener('change', () => {
+    commitTpl();
+    editSel = Number($('pe-pick').value);
+    renderPromptEdit();
+  });
+  $('pe-tpl').addEventListener('input', commitTpl);
+  $('pe-new').addEventListener('click', () => {
+    commitTpl();
+    let n = promptDraft.length + 1;
+    while (promptDraft.some((p) => p.name === `指令 ${n}`)) n++;
+    promptDraft.push({ name: `指令 ${n}`, template: '{selection}' });
+    editSel = promptDraft.length - 1;
+    renderPromptEdit();
+    $('set-save').classList.add('dirty');
+    $('pe-tpl').focus();
+  });
+  $('pe-del').addEventListener('click', () => {
+    if (promptDraft.length <= 1) { flashStatus('至少保留一条指令', true); return; }
+    promptDraft.splice(editSel, 1);
+    editSel = Math.max(0, editSel - 1);
+    renderPromptEdit();
+    $('set-save').classList.add('dirty');
+  });
+
   // ---------- settings ----------
+  const AGENT_TOKENS = ['auto', 'claude-code', 'codex', 'workbuddy', 'qoder', 'project'];
   async function init() {
     settings = await api.getSettings();
     mode = settings.withContext === false ? 'direct' : 'read';
     applyMode();
     renderSites();
-    $('set-prompt').value = settings.promptTemplate ?? '';
-    $('set-project').value = settings.projectPath ?? '';
-    $('set-redact').checked = !!settings.redactPaths;
+    renderPromptPick();
+    loadPromptEdit();
     $('set-chat-sites').value = settings.chatSites.map((s) => `${s.name}|${s.url}`).join('\n');
     $('set-direct-sites').value = settings.directSites.map((s) => `${s.name}|${s.url}`).join('\n');
+    $('set-sessions').value = settings.sessionPaths.map((s) => `${s.agent}|${s.path}`).join('\n');
+    $('set-redact').checked = !!settings.redactPaths;
     refreshSummary();
   }
   $('settings').addEventListener('input', () => $('set-save').classList.add('dirty'));
   $('set-save').addEventListener('click', async () => {
-    const parse = (text) => {
+    commitTpl();
+    const prompts = promptDraft.filter((p) => p.name && p.template);
+    const sessionPaths = [];
+    const badSess = [];
+    $('set-sessions').value.split('\n').forEach((line, i) => {
+      if (!line.trim()) return;
+      const p = line.split('|');
+      const agent = p[0]?.trim().toLowerCase();
+      const path = p[1]?.trim();
+      if (p.length >= 2 && AGENT_TOKENS.includes(agent) && path) sessionPaths.push({ agent, path });
+      else badSess.push(i + 1);
+    });
+    const parseSites = (text) => {
       const sites = [];
       const bad = [];
       text.split('\n').forEach((line, i) => {
@@ -401,22 +485,27 @@ if (MODE === 'panel') {
       });
       return { sites, bad };
     };
-    const chat = parse($('set-chat-sites').value);
-    const direct = parse($('set-direct-sites').value);
+    const chat = parseSites($('set-chat-sites').value);
+    const direct = parseSites($('set-direct-sites').value);
     settings = await api.patchSettings({
-      promptTemplate: $('set-prompt').value.trim(),
-      projectPath: $('set-project').value.trim(),
+      prompts: prompts.length ? prompts : settings.prompts,
+      activePrompt: prompts.length ? Math.min(settings.activePrompt, prompts.length - 1) : 0,
+      sessionPaths,
       redactPaths: $('set-redact').checked,
       chatSites: chat.sites.length ? chat.sites : settings.chatSites,
       directSites: direct.sites.length ? direct.sites : settings.directSites,
     });
     renderSites();
+    renderPromptPick();
+    loadPromptEdit();
     $('set-save').classList.remove('dirty');
     const warn = [];
-    if (chat.bad.length) warn.push(`会话解读第 ${chat.bad.join('、')} 行`);
-    if (direct.bad.length) warn.push(`直通第 ${direct.bad.join('、')} 行`);
-    if (warn.length) flashStatus(`目标站无效（需 名称|http(s)://URL）：${warn.join('，')}，该行未生效`, true);
+    if (chat.bad.length) warn.push(`会话解读站点第 ${chat.bad.join('、')} 行`);
+    if (direct.bad.length) warn.push(`直通站点第 ${direct.bad.join('、')} 行`);
+    if (badSess.length) warn.push(`会话路径第 ${badSess.join('、')} 行`);
+    if (warn.length) flashStatus(`无效行（站点需 名称|http(s)://URL，路径需 ${AGENT_TOKENS.join('/')}|路径）：${warn.join('，')}，未生效`, true);
     else flashStatus('已保存');
+    refreshPackMeta(); // 指令集可能变了
   });
 
   init();

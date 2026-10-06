@@ -1,9 +1,22 @@
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
+import { qoderWorkDbPath } from '@select-assist/ctxpack';
 
 export interface SiteTarget {
   name: string;
   url: string;
+}
+
+export interface PromptTemplate {
+  name: string;
+  template: string;
+}
+
+/** user-maintained session source; agent accepts an adapter name, 'auto', or 'project' (cwd hint for 自动判定) */
+export interface SessionPath {
+  agent: string;
+  path: string;
 }
 
 export interface Settings {
@@ -14,14 +27,31 @@ export interface Settings {
   withContext: boolean;
   chatSites: SiteTarget[];
   directSites: SiteTarget[];
-  promptTemplate: string;
-  projectPath: string;
+  prompts: PromptTemplate[];
+  activePrompt: number;
+  sessionPaths: SessionPath[];
   redactPaths: boolean;
   contextTurns: number;
 }
 
 export const DEFAULT_PROMPT_TEMPLATE =
   '请根据以下用户与agent的交互记录，解释用户选中的词 / 句子：「{selection}」';
+
+/** the known agent stores, pre-filled into 会话路径 so discovery is settings-driven (delete a line = stop scanning it) */
+export function defaultSessionPaths(): SessionPath[] {
+  const home = os.homedir();
+  return [
+    { agent: 'claude-code', path: path.join(home, '.claude', 'projects') },
+    { agent: 'codex', path: path.join(home, '.codex', 'sessions') },
+    { agent: 'workbuddy', path: path.join(home, '.workbuddy', 'projects') },
+    { agent: 'qoder', path: path.join(home, '.qoder-cn', 'projects') },
+    { agent: 'qoder', path: qoderWorkDbPath() },
+  ];
+}
+
+export function activePromptTemplate(s: Settings): string {
+  return s.prompts[s.activePrompt]?.template || s.prompts[0]?.template || DEFAULT_PROMPT_TEMPLATE;
+}
 
 const DEFAULTS: Settings = {
   expanded: false,
@@ -37,8 +67,9 @@ const DEFAULTS: Settings = {
     { name: 'DeepL', url: 'https://www.deepl.com/translator' },
     { name: '有道', url: 'https://fanyi.youdao.com/#/TextTranslation' },
   ],
-  promptTemplate: DEFAULT_PROMPT_TEMPLATE,
-  projectPath: '',
+  prompts: [{ name: '解释选区', template: DEFAULT_PROMPT_TEMPLATE }],
+  activePrompt: 0,
+  sessionPaths: defaultSessionPaths(),
   redactPaths: false,
   contextTurns: 8,
 };
@@ -57,8 +88,29 @@ export class SettingsStore {
         raw.chatSites = raw.sites;
         delete raw.sites;
       }
+      // single template → named prompt set (the user's own template keeps its name slot)
+      if (typeof raw.promptTemplate === 'string' && !Array.isArray(raw.prompts)) {
+        raw.prompts = [{ name: '解释选区', template: raw.promptTemplate }];
+        if (raw.activePrompt === undefined) raw.activePrompt = 0;
+        delete raw.promptTemplate;
+      }
+      // discovery is settings-driven: an absent OR empty list means "never configured" → seed built-ins
+      if (!Array.isArray(raw.sessionPaths) || raw.sessionPaths.length === 0) {
+        raw.sessionPaths = raw.projectPath
+          ? [{ agent: 'project', path: raw.projectPath }, ...defaultSessionPaths()]
+          : defaultSessionPaths();
+        delete raw.projectPath;
+      } else if (typeof raw.projectPath === 'string' && raw.projectPath) {
+        // legacy single projectPath becomes a 'project' cwd-hint line ahead of the list
+        raw.sessionPaths = [{ agent: 'project', path: raw.projectPath }, ...raw.sessionPaths];
+        delete raw.projectPath;
+      }
       this.cache = { ...DEFAULTS, ...raw };
-      delete (this.cache as Partial<Settings> & { sites?: unknown }).sites;
+      const stale = this.cache as Settings & { sites?: unknown; promptTemplate?: unknown; projectPath?: unknown };
+      delete stale.sites;
+      delete stale.promptTemplate;
+      delete stale.projectPath;
+      if (this.cache.activePrompt >= this.cache.prompts.length) this.cache.activePrompt = 0;
     } catch {
       /* first run */
     }

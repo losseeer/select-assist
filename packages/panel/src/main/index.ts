@@ -105,6 +105,7 @@ function createWindows(): void {
     frame: false,
     transparent: true,
     ...MATERIAL, // macOS HUD material behind the translucent page; --bg veil keeps text contrast
+    visualEffectState: 'active', // keep the blur in its active variant even when the desktop/Finder takes focus
     resizable: false,
     movable: true,
     skipTaskbar: true,
@@ -130,6 +131,7 @@ function createWindows(): void {
     frame: false,
     transparent: true,
     ...MATERIAL,
+    visualEffectState: 'active', // same as the chip: vibrancy must not fall back to the inactive variant
     resizable: false,
     movable: true,
     skipTaskbar: true,
@@ -168,6 +170,10 @@ function expand(): void {
     clampToDisplay({ x: c.x + CHIP.width - PANEL.width, y: c.y, width: PANEL.width, height: panelHeight }),
   );
   chipWin.hide();
+  // Electron rewrites collectionBehavior across hide/show cycles; without this the panel
+  // loses its fullscreen-Space membership and collapsing from a fullscreen app yanks
+  // the user back to the desktop Space
+  topMost(panelWin);
   panelWin.showInactive();
   safeSend(panelWin, 'win:shown'); // refresh status line from main
   notifyClip(); // then replay the unread-clipboard badge
@@ -179,6 +185,7 @@ function collapse(): void {
     clampToDisplay({ x: p.x + PANEL.width - CHIP.width, y: p.y, width: CHIP.width, height: CHIP.height }),
   );
   panelWin.hide();
+  topMost(chipWin); // same re-assert as expand(): the chip must stay on the fullscreen Space
   chipWin.showInactive();
   safeSend(chipWin, 'win:shown'); // chip status line refreshes like the panel does
   notifyClip();
@@ -207,7 +214,7 @@ function wireIpc(): void {
     if (ok) lastClip = clipboard.readText();
     return ok;
   });
-  ipcMain.handle('sessions:browse', () => capturer.browse());
+  ipcMain.handle('sessions:browse', () => capturer.browse(settings.get()));
 
   ipcMain.handle('site:open', (_e, url: string) => {
     try {

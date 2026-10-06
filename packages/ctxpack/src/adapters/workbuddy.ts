@@ -43,8 +43,8 @@ export const workbuddyAdapter: TrackBAdapter = {
   adapter: ADAPTER,
 
   async discoverSessions(opts = {}): Promise<SessionRef[]> {
-    const { cwd, limit = 20, home } = opts;
-    const projectsDir = path.join(homeDir(home), '.workbuddy', 'projects');
+    const { cwd, limit = 20, home, root } = opts;
+    const projectsDir = root ?? path.join(homeDir(home), '.workbuddy', 'projects');
     const refs: SessionRef[] = [];
     let dirs: string[] = [];
     try {

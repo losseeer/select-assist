@@ -68,11 +68,11 @@ export const codexAdapter: TrackBAdapter = {
   adapter: ADAPTER,
 
   async discoverSessions(opts = {}): Promise<SessionRef[]> {
-    const { cwd, limit = 20, home } = opts;
+    const { cwd, limit = 20, home, root } = opts;
     const codexHome = home
       ? path.join(home, '.codex')
       : process.env.CODEX_HOME ?? path.join(homeDir(), '.codex');
-    const sessionsRoot = path.join(codexHome, 'sessions');
+    const sessionsRoot = root ?? path.join(codexHome, 'sessions');
     const refs: SessionRef[] = [];
     for (const file of await walkDateDirs(sessionsRoot)) {
       let stat;

@@ -25,7 +25,7 @@ export interface TranscriptResult {
 export interface TrackBAdapter {
   agent: string;
   adapter: string;
-  /** newest first; filtered/boosted by cwd when given */
-  discoverSessions(opts?: { cwd?: string; limit?: number; home?: string }): Promise<SessionRef[]>;
+  /** newest first; filtered/boosted by cwd when given; root overrides the built-in scan location */
+  discoverSessions(opts?: { cwd?: string; limit?: number; home?: string; root?: string }): Promise<SessionRef[]>;
   readTranscript(ref: SessionRef): Promise<TranscriptResult>;
 }

@@ -12,7 +12,7 @@
 <body>
   <!-- ======== chip window = collapsed title bar (focusable:false, non-activating) ======== -->
   <div id="chip">
-    <span id="dot" class="icon-btn" data-tip="展开面板" tabindex="0" role="button" aria-label="展开面板">▸</span>
+    <span id="dot" class="icon-btn" tabindex="0" role="button" aria-label="展开面板">▸</span>
     <span id="chip-status" class="status">还没有选区</span>
     <span id="chip-badge" aria-label="剪贴板有新复制"></span>
     <button id="chip-capture" class="primary" data-tip="把刚才复制的内容取进来">取入选区</button>
@@ -21,7 +21,7 @@
   <!-- ======== panel window (focusable, shown/hidden) ======== -->
   <div id="panel">
     <div id="panel-head">
-      <span id="collapse" class="icon-btn" data-tip="折叠" tabindex="0" role="button" aria-label="折叠">▾</span>
+      <span id="collapse" class="icon-btn" tabindex="0" role="button" aria-label="折叠">▾</span>
       <span id="head-status" class="status">还没有选区</span>
       <button id="head-capture" class="primary" data-tip="把刚才复制的内容取进来">取入选区</button>
       <span id="quit" class="icon-btn" data-tip="退出常驻" tabindex="0" role="button" aria-label="退出常驻">✕</span>
@@ -30,8 +30,8 @@
     <section id="ctx-group">
       <div id="ctx-row">
         <div id="mode-seg" role="tablist" aria-label="工作模式">
-          <button type="button" role="tab" id="mode-read" aria-selected="true" data-tip="带上 agent 会话历史，组装成解读 Prompt">会话解读</button>
-          <button type="button" role="tab" id="mode-direct" aria-selected="false" data-tip="不带任何上下文，复制的就是选区的逐字节原文（翻译 / 检索 / 粘贴即用）">选区直通</button>
+          <button type="button" role="tab" id="mode-read" aria-selected="true" data-tip="带会话历史组装 Prompt">会话解读</button>
+          <button type="button" role="tab" id="mode-direct" aria-selected="false" data-tip="逐字节原文，翻译 / 检索即用">选区直通</button>
         </div>
         <span id="ctx-selects">
           <select id="ctx-agent">
@@ -41,13 +41,13 @@
             <option value="workbuddy">WorkBuddy</option>
             <option value="qoder">Qoder</option>
           </select>
-          <select id="ctx-turns" data-tip="上下文只按「轮数」截取最近对话，不做任何字符截断；目标站输入框放不下时减少轮数">
-            <option value="4">4 轮</option><option value="8" selected>8 轮</option><option value="16">16 轮</option><option value="30">30 轮</option>
+          <select id="ctx-turns" data-tip="按轮数截取，不做字符截断">
+            <option value="4">4 轮</option><option value="8" selected>8 轮</option><option value="16">16 轮</option><option value="30">30 轮</option><option value="all">全部</option>
           </select>
         </span>
       </div>
-      <div id="ctx-actions" class="off">
-        <button id="ctx-browse" data-tip="按最近修改排序；点一条即用它填充上下文">浏览会话</button>
+      <div id="ctx-actions" class="hidden">
+        <button id="ctx-browse" data-tip="点一条即用它填充">浏览会话</button>
         <button id="ctx-refresh">刷新上下文</button>
       </div>
       <div id="sum-session" class="line-slot"></div>
@@ -59,7 +59,8 @@
 
     <section id="act-group">
       <div id="actions">
-        <button id="copy" class="primary" data-tip="组装 Prompt 并复制到剪贴板">复制 Prompt</button>
+        <select id="prompt-pick" data-tip="增删改在设置里"></select>
+        <button id="copy" class="primary" data-tip="指令 + 选区 + 历史，一次复制">复制 Prompt</button>
         <span id="sites"></span>
       </div>
       <div id="pack-meta" class="line-slot"></div>
@@ -68,12 +69,19 @@
     <details id="settings">
       <summary>设置</summary>
       <div class="ctx-only">
-        <label>提问指令<textarea id="set-prompt" rows="3" data-tip="{selection} 会被替换为选区原文"></textarea></label>
-        <label>项目路径<input id="set-project" data-tip="判定会话用；也可直接填某个 .jsonl 会话文件的完整路径" placeholder="/Users/x/prj 或 …/session.jsonl" /></label>
-        <label class="switch"><input id="set-redact" type="checkbox" data-tip="复制时家目录写作 ~" /> 路径脱敏</label>
+        <label>提问指令</label>
+        <div id="pe-bar">
+          <select id="pe-pick"></select>
+          <button id="pe-new" type="button">+ 新建</button>
+          <button id="pe-del" type="button">删除</button>
+          <span id="pe-count"></span>
+        </div>
+        <textarea id="pe-tpl" rows="3"></textarea>
+        <label>会话路径<textarea id="set-sessions" rows="5" data-tip="每行：agent|路径；发现只读这里，删一行即停扫该源"></textarea></label>
+        <label class="switch"><input id="set-redact" type="checkbox" data-tip="组装时家目录写作 ~" /> 路径脱敏</label>
       </div>
-      <label class="site-edit" data-for="read">目标站<textarea id="set-chat-sites" rows="3" data-tip="每行一条：名称|URL；「会话解读」组装 Prompt 后打开的 LLM 对话站"></textarea></label>
-      <label class="site-edit" data-for="direct">目标站<textarea id="set-direct-sites" rows="3" data-tip="每行一条：名称|URL；「选区直通」复制原文后打开的翻译 / 搜索站"></textarea></label>
+      <label class="site-edit" data-for="read">目标站<textarea id="set-chat-sites" rows="3" data-tip="每行：名称|URL"></textarea></label>
+      <label class="site-edit" data-for="direct">目标站<textarea id="set-direct-sites" rows="3" data-tip="每行：名称|URL"></textarea></label>
       <button id="set-save">保存设置</button>
     </details>
   </div>

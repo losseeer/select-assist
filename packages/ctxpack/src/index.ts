@@ -8,7 +8,7 @@ export type { SessionRef, TrackBAdapter, TranscriptResult } from './adapters/typ
 export { claudeCodeAdapter } from './adapters/claude-code.js';
 export { codexAdapter } from './adapters/codex.js';
 export { workbuddyAdapter } from './adapters/workbuddy.js';
-export { qoderAdapter } from './adapters/qoder.js';
+export { qoderAdapter, qoderWorkDbPath } from './adapters/qoder.js';
 export { stripSynthetic, matchCwd } from './adapters/util.js';
 
 import { matchCwd } from './adapters/util.js';

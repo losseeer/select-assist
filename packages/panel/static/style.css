@@ -146,9 +146,10 @@ html[data-mode="panel"] body { height: 100vh; }
 #mode-seg button[aria-selected="true"]:hover { filter: brightness(1.1); }
 #ctx-selects { display: inline-flex; gap: 6px; }
 #ctx-selects.off { visibility: hidden; } /* keeps its slot: no layout jump on mode switch */
+#prompt-pick { max-width: 130px; }
+#prompt-pick.off { visibility: hidden; } /* same fixed-slot rule in the actions row */
 #ctx-actions { display: flex; gap: 6px; }
 #ctx-actions button { font-size: 12px; padding: 4px 10px; }
-#ctx-actions.off { visibility: hidden; } /* keeps its slot: no layout jump on toggle */
 /* fixed 16px status slots: ellipsis when long, never a half-clipped line */
 .line-slot { min-height: 16px; line-height: 16px; font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #ctx-status.err { color: var(--warn); }
@@ -177,10 +178,17 @@ html[data-mode="panel"] body { height: 100vh; }
 #copy.done { filter: brightness(1.2); transform: scale(1.04); }
 
 /* ---------- settings ---------- */
-#set-chat-sites, #set-direct-sites, #set-prompt {
+#set-chat-sites, #set-direct-sites, #set-sessions, #pe-tpl {
   background: rgba(0, 0, 0, 0.28); border: none; border-radius: 6px;
   padding: 6px 8px; color: var(--fg); resize: vertical; user-select: text; width: 100%;
 }
+/* 提问指令工具条：下拉选 + 新建 + 删除，右端「n / N」计数 */
+#pe-bar { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
+#pe-pick { max-width: 150px; }
+#pe-new, #pe-del { font-size: 12px; padding: 4px 12px; }
+#pe-del { color: #fff; background: rgba(222, 60, 51, 0.85); }   /* macOS destructive: solid red + white label */
+#pe-del:hover { background: #ff453a; }
+#pe-count { margin-left: auto; color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
 #settings code { color: var(--dim); }
 
 /* disclosure: plain text + chevron, fill only on hover */

@@ -81,8 +81,8 @@ export function makeJsonlAdapter(
     adapter: adapterId,
 
     async discoverSessions(opts = {}): Promise<SessionRef[]> {
-      const { cwd, limit = 20, home } = opts;
-      const projectsDir = projectsDirOf(home);
+      const { cwd, limit = 20, home, root } = opts;
+      const projectsDir = root ?? projectsDirOf(home);
       const refs: SessionRef[] = [];
       for (const file of await listSessionFiles(projectsDir)) {
         let stat;
