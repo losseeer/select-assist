@@ -3,10 +3,10 @@
 
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, Bool};
-use objc2::{MainThreadMarker, MainThreadOnly};
+use objc2::runtime::{AnyObject, Bool, Sel};
+use objc2::{define_class, msg_send, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::*;
-use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 
 pub const RADIUS: f64 = 12.0;
 /// #chip / #panel 的 padding: 8px 12px 12px
@@ -21,7 +21,7 @@ pub const ICON: f64 = 22.0;
 pub const HEAD_H: f64 = 24.0;
 pub const BUTTON_W: f64 = 74.0;
 pub const BUTTON_H: f64 = 24.0;
-pub const TEXT_H: f64 = 16.0;
+pub const LINE_H: f64 = 16.0;
 pub const BADGE: f64 = 8.0;
 
 pub fn rect(x: f64, y: f64, w: f64, h: f64) -> NSRect {
@@ -98,34 +98,6 @@ pub fn set_mask(view: &NSVisualEffectView, width: f64, height: f64) {
     view.setMaskImage(Some(&image));
 }
 
-/// button.primary：填充式、无描边、--accent
-pub fn push_button(
-    mtm: MainThreadMarker,
-    title: &str,
-    frame: NSRect,
-    target: Option<&AnyObject>,
-    action: Option<objc2::runtime::Sel>,
-) -> Retained<NSButton> {
-    let button = NSButton::new(mtm);
-    button.setFrame(frame);
-    button.setBezelStyle(NSBezelStyle::Push);
-    button.setBezelColor(Some(&rgba(10.0, 132.0, 255.0, 1.0)));
-    button.setTitle(&NSString::from_str(title));
-    button.setFont(Some(&NSFont::systemFontOfSize(12.0)));
-    wire(&button, target, action);
-    button
-}
-
-/// #sites button：填充式中性的，不像 primary 那样抢强调色
-pub fn text_button(mtm: MainThreadMarker, title: &str, frame: NSRect) -> Retained<NSButton> {
-    let button = NSButton::new(mtm);
-    button.setFrame(frame);
-    button.setBezelStyle(NSBezelStyle::Push);
-    button.setTitle(&NSString::from_str(title));
-    button.setFont(Some(&NSFont::systemFontOfSize(12.0)));
-    button
-}
-
 /// 未读点。必须 layer-backed：非 layer 视图把 alphaValue 从 0 调回 1 时 AppKit 不重绘（实测）。
 pub fn set_dot(dot: &NSBox, on: bool) {
     dot.setWantsLayer(true);
@@ -144,37 +116,123 @@ pub fn set_status(field: &NSTextField, text: &str, tip: &str, error: bool) {
     field.setTextColor(Some(&tint));
 }
 
-pub fn set_title(button: &NSButton, title: &str, tip: Option<&str>) {
+pub fn set_title(button: &NSButton, title: &str) {
     button.setTitle(&NSString::from_str(title));
-    button.setToolTip(tip.map(NSString::from_str).as_deref());
 }
 
-/// .icon-btn：无边框的窗口动作键（▸ / ▾ / ✕）
-pub fn glyph_button(
+pub fn set_tip(view: &NSView, tip: Option<&str>) {
+    view.setToolTip(tip.map(NSString::from_str).as_deref());
+}
+
+/// target/action 由 Controller 在构造之后统一挂（按钮、下拉、分段控件都是 NSControl）
+pub fn wire(control: &impl AsRef<NSControl>, target: Option<&AnyObject>, action: Sel) {
+    let control = control.as_ref();
+    unsafe {
+        control.setTarget(target);
+        control.setAction(Some(action));
+    }
+}
+
+/// button.primary：填充式、无描边、--accent
+pub fn push_button(mtm: MainThreadMarker, title: &str, frame: NSRect) -> Retained<NSButton> {
+    styled_button(mtm, title, frame, Some(&rgba(10.0, 132.0, 255.0, 1.0)))
+}
+
+/// #sites button：填充式中性的，不像 primary 那样抢强调色
+pub fn text_button(mtm: MainThreadMarker, title: &str, frame: NSRect) -> Retained<NSButton> {
+    styled_button(mtm, title, frame, None)
+}
+
+fn styled_button(
     mtm: MainThreadMarker,
-    glyph: &str,
+    title: &str,
     frame: NSRect,
-    target: Option<&AnyObject>,
-    action: Option<objc2::runtime::Sel>,
+    bezel: Option<&NSColor>,
 ) -> Retained<NSButton> {
+    let button = NSButton::new(mtm);
+    button.setFrame(frame);
+    button.setBezelStyle(NSBezelStyle::Push);
+    if let Some(color) = bezel {
+        button.setBezelColor(Some(color));
+    }
+    button.setTitle(&NSString::from_str(title));
+    button.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+    button
+}
+
+/// .icon-btn：无边框的动作键（▸ / ▾ / ✕ / 浏览器行的整行热区）
+pub fn glyph_button(mtm: MainThreadMarker, glyph: &str, frame: NSRect) -> Retained<NSButton> {
     let button = NSButton::new(mtm);
     button.setFrame(frame);
     button.setBordered(false);
     button.setTitle(&NSString::from_str(glyph));
     button.setFont(Some(&NSFont::systemFontOfSize(12.0)));
     button.setContentTintColor(Some(&NSColor::secondaryLabelColor()));
-    wire(&button, target, action);
     button
 }
 
-fn wire(button: &NSButton, target: Option<&AnyObject>, action: Option<objc2::runtime::Sel>) {
-    unsafe {
-        button.setTarget(target);
-        button.setAction(action);
+define_class! {
+    /// 无边框窗口默认拿不到键盘焦点，而 panel 里的多行编辑框需要 —— 对应 Electron 的
+    /// frameless + focusable:true。Titled 也能成 key，但 AppKit 会在 order-front 时
+    /// constrainFrameRect，把我们算好的锚点改掉（实测 x<221 会被推到 221），所以走子类这条路。
+    #[unsafe(super(NSPanel))]
+    #[thread_kind = MainThreadOnly]
+    pub struct KeyablePanel;
+
+    impl KeyablePanel {
+        #[unsafe(method(canBecomeKeyWindow))]
+        fn can_become_key(&self) -> bool {
+            true
+        }
+
+        /// renderer.js 里 document mousedown 命中 INPUT/TEXTAREA/SELECT 才调 focusSelf()：
+        /// 只有点到能输入的东西才把窗口提成 key，其余交互一律不抢前台焦点。
+        #[unsafe(method(sendEvent:))]
+        fn send_event(&self, event: &NSEvent) {
+            if event.r#type() == NSEventType::LeftMouseDown {
+                let point = event.locationInWindow();
+                let editable = self
+                    .contentView()
+                    .and_then(|root| root.hitTest(point))
+                    .map(|hit| {
+                        hit.isKindOfClass(objc2::class!(NSTextView))
+                            || hit.isKindOfClass(objc2::class!(NSPopUpButton))
+                    })
+                    .unwrap_or(false);
+                if editable && !self.isKeyWindow() {
+                    self.makeKeyAndOrderFront(None);
+                }
+            }
+            unsafe { msg_send![super(self), sendEvent: event] }
+        }
     }
+
+    unsafe impl NSObjectProtocol for KeyablePanel {}
 }
 
-/// 非激活悬浮面板：Borderless 时不可为 key（chip），Titled 时可 key（panel）
+fn configure(window: &NSPanel) {
+    unsafe {
+        window.setReleasedWhenClosed(false);
+    }
+    // 圆角由 maskImage 与 NSBox 负责，所以窗口自身不画圆角、也不画背景
+    window.setOpaque(false);
+    window.setBackgroundColor(Some(&NSColor::clearColor()));
+    window.setHasShadow(true);
+    window.setLevel(NSFloatingWindowLevel);
+    // 等价于 alwaysOnTop + setVisibleOnAllWorkspaces({ visibleOnFullScreen: true })
+    window.setCollectionBehavior(
+        NSWindowCollectionBehavior::CanJoinAllSpaces
+            | NSWindowCollectionBehavior::FullScreenAuxiliary,
+    );
+    window.setAppearance(
+        NSAppearance::appearanceNamed(unsafe { NSAppearanceNameVibrantDark }).as_deref(),
+    );
+    // 无边框拖动（app-region: drag）
+    window.setMovableByWindowBackground(true);
+    window.setHidesOnDeactivate(false);
+}
+
+/// chip：Borderless 的 NSPanel，不能成为 key，所以永不抢键盘焦点
 pub fn panel(
     mtm: MainThreadMarker,
     width: f64,
@@ -189,24 +247,28 @@ pub fn panel(
         NSBackingStoreType::Buffered,
         false,
     );
-    unsafe {
-        panel.setReleasedWhenClosed(false);
-    }
-    // 圆角由 maskImage 与 NSBox 负责，所以窗口自身不画圆角、也不画背景
-    panel.setOpaque(false);
-    panel.setBackgroundColor(Some(&NSColor::clearColor()));
-    panel.setHasShadow(true);
-    panel.setLevel(NSFloatingWindowLevel);
-    // 等价于 alwaysOnTop + setVisibleOnAllWorkspaces({ visibleOnFullScreen: true })
-    panel.setCollectionBehavior(
-        NSWindowCollectionBehavior::CanJoinAllSpaces
-            | NSWindowCollectionBehavior::FullScreenAuxiliary,
-    );
-    panel.setAppearance(
-        NSAppearance::appearanceNamed(unsafe { NSAppearanceNameVibrantDark }).as_deref(),
-    );
-    // 无边框拖动（app-region: drag）
-    panel.setMovableByWindowBackground(true);
-    panel.setHidesOnDeactivate(false);
+    configure(&panel);
     panel
+}
+
+/// panel：同样无边框，但允许成为 key window（设置里的编辑框要用键盘）
+pub fn keyable_panel(
+    mtm: MainThreadMarker,
+    width: f64,
+    height: f64,
+    origin: NSPoint,
+) -> Retained<NSPanel> {
+    let frame = rect(origin.x, origin.y, width, height);
+    let style = NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel;
+    let panel: Retained<KeyablePanel> = unsafe {
+        msg_send![
+            KeyablePanel::alloc(mtm),
+            initWithContentRect: frame,
+            styleMask: style,
+            backing: NSBackingStoreType::Buffered,
+            defer: false,
+        ]
+    };
+    configure(&panel);
+    panel.into_super()
 }

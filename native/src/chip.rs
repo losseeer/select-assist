@@ -6,7 +6,7 @@ use objc2::MainThreadMarker;
 use objc2_app_kit::{NSBox, NSButton, NSColor, NSPanel, NSTextField, NSWindowStyleMask};
 
 use crate::geo::Geometry;
-use crate::views::{self, BADGE, BUTTON_H, BUTTON_W, GAP, ICON, PAD_X, RADIUS, TEXT_H};
+use crate::views::{self, BADGE, BUTTON_H, BUTTON_W, GAP, ICON, LINE_H, PAD_X, RADIUS};
 
 pub const WIDTH: f64 = 400.0;
 pub const HEIGHT: f64 = 44.0;
@@ -50,8 +50,6 @@ impl Chip {
             mtm,
             "\u{25B8}",
             views::rect(PAD_X, (HEIGHT - ICON) / 2.0, ICON, ICON),
-            None,
-            None,
         );
         blur.addSubview(&dot);
 
@@ -65,9 +63,9 @@ impl Chip {
             &NSColor::secondaryLabelColor(),
             views::rect(
                 status_x,
-                (HEIGHT - TEXT_H) / 2.0,
+                (HEIGHT - LINE_H) / 2.0,
                 badge_x - status_x - GAP,
-                TEXT_H,
+                LINE_H,
             ),
         );
         blur.addSubview(&status);
@@ -87,10 +85,8 @@ impl Chip {
             mtm,
             "取入选区",
             views::rect(capture_x, (HEIGHT - BUTTON_H) / 2.0, BUTTON_W, BUTTON_H),
-            None,
-            None,
         );
-        views::set_title(&capture, "取入选区", Some("把刚才复制的内容取进来"));
+        views::set_tip(&capture, Some("把刚才复制的内容取进来"));
         blur.addSubview(&capture);
 
         // showInactive()：出现但不激活应用

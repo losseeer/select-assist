@@ -1,10 +1,7 @@
 //! 与 packages/ctxpack/test/adapters.test.mjs 一一对应（14 例）。
 //! fixture 是从 TS 的 fixtures.mjs 真实生成后复制到 native/fixtures/ 的，agents.db 在测试里按同样结构重建。
 
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-use rusqlite::Connection;
+use crate::test_support::{fixture_home, scratch_dir, write_qoder_work_db, FixtureHome};
 
 use crate::ctxpack::adapters::claude_code;
 use crate::ctxpack::adapters::codex::Codex;
@@ -13,119 +10,6 @@ use crate::ctxpack::adapters::util::match_cwd;
 use crate::ctxpack::adapters::workbuddy::Workbuddy;
 use crate::ctxpack::adapters::{Adapter, DiscoverOpts, SessionRef};
 use crate::ctxpack::pick_session;
-
-static COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-struct FixtureHome {
-    home: PathBuf,
-    cwd: String,
-}
-
-impl Drop for FixtureHome {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.home);
-    }
-}
-
-/// fixture 里的绝对路径写作 __HOME__，复制到临时 home 时代入真实位置
-fn copy_tree(from: &Path, to: &Path, home: &str) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap().flatten() {
-        let target = to.join(entry.file_name());
-        if entry.path().is_dir() {
-            copy_tree(&entry.path(), &target, home);
-        } else {
-            let text = std::fs::read_to_string(entry.path())
-                .unwrap()
-                .replace("__HOME__", home);
-            std::fs::write(target, text).unwrap();
-        }
-    }
-}
-
-/// 与 fixtures.mjs 的 writeQoderWorkDb 同结构同数据
-fn write_qoder_work_db(data_dir: &Path, cwd: &str) {
-    std::fs::create_dir_all(data_dir).unwrap();
-    let db = Connection::open(data_dir.join("agents.db")).unwrap();
-    db.execute_batch(
-        r#"
-        create table projects (id text primary key, name text, path text, created_at integer, updated_at integer);
-        create table chats (id text primary key, name text, project_id text, created_at integer, updated_at integer, deleted_at integer);
-        create table messages (id text primary key, message_id text, chat_id text, sub_chat_id text, sequence integer, role text, parts text, created_at integer);
-        "#,
-    )
-    .unwrap();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
-    db.execute(
-        "insert into projects values (?,?,?,?,?)",
-        rusqlite::params!["p1", "prj", cwd, now, now],
-    )
-    .unwrap();
-    db.execute(
-        "insert into chats values (?,?,?,?,?,?)",
-        rusqlite::params![
-            "chat1",
-            "面试准备",
-            "p1",
-            now - 100,
-            now,
-            Option::<i64>::None
-        ],
-    )
-    .unwrap();
-    let rows = [
-        (
-            "m1",
-            "mm1",
-            1,
-            "user",
-            r#"[{"type":"text","text":"围绕项目向我提问"}]"#,
-        ),
-        (
-            "m2",
-            "mm2",
-            2,
-            "assistant",
-            r#"[{"type":"tool-Thinking","input":{"text":"PRIVATE"}},{"type":"text","text":"好的，第一个问题："}]"#,
-        ),
-        (
-            "m3",
-            "mm3",
-            3,
-            "assistant",
-            r#"[{"type":"error","text":"MUST NOT APPEAR"}]"#,
-        ),
-    ];
-    for (id, message_id, sequence, role, parts) in rows {
-        db.execute(
-            "insert into messages values (?,?,?,?,?,?,?,?)",
-            rusqlite::params![id, message_id, "chat1", "s1", sequence, role, parts, now],
-        )
-        .unwrap();
-    }
-}
-
-fn fixture_home() -> FixtureHome {
-    let home = std::env::temp_dir().join(format!(
-        "sa-ctxpack-{}-{}",
-        std::process::id(),
-        COUNTER.fetch_add(1, Ordering::SeqCst)
-    ));
-    copy_tree(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures"),
-        &home,
-        &home.to_string_lossy(),
-    );
-    let cwd = home.join("Dev").join("prj").to_string_lossy().to_string();
-    write_qoder_work_db(
-        &home.join("Library/Application Support/QoderWork/data"),
-        &cwd,
-    );
-    FixtureHome { home, cwd }
-}
 
 fn opts(home: &FixtureHome) -> DiscoverOpts {
     DiscoverOpts {
@@ -414,11 +298,7 @@ fn pick_session_uppercase_cwd_still_finds_the_lowercase_logged_session() {
 /// 所以分两半验：路径推导（qoder.rs 的 support_dir 单测）+ 按 APPDATA 布局建库后能读出来
 #[test]
 fn qoder_work_reads_a_windows_layout_database() {
-    let app_data = std::env::temp_dir().join(format!(
-        "sa-appdata-{}-{}",
-        std::process::id(),
-        COUNTER.fetch_add(1, Ordering::SeqCst)
-    ));
+    let app_data = scratch_dir("appdata");
     let win_cwd = "d:\\Projects\\prj";
     write_qoder_work_db(&app_data.join("QoderWork/data"), win_cwd);
     let db = app_data

@@ -22,6 +22,7 @@ pub const EMPTY_REASON: &str = "剪贴板为空，请先在源界面复制选中
 pub const NO_SELECTION: &str = "还没有选区";
 pub const NO_SELECTION_TIP: &str = "在源界面复制，再点「取入选区」";
 pub const CAPTURED: &str = "已取入选区";
+pub const CONTEXT_EMPTY: &str = "上下文未填充";
 
 /// Electron 显示的「N 字」是 JS 的 text.length，即 UTF-16 码元数，不是 Rust 的 chars().count()
 pub fn chars_len(text: &str) -> usize {
@@ -57,6 +58,7 @@ pub fn note_from(text: &str) -> ClipNote {
     }
 }
 
+/// 状态行：首行为空时退回「已取入选区」，没有选区就说还没有
 pub fn status_text(selection: Option<&Selection>) -> String {
     match selection {
         Some(s) if s.first_line.is_empty() => CAPTURED.to_string(),
@@ -69,14 +71,6 @@ pub fn status_tip(selection: Option<&Selection>) -> String {
     match selection {
         Some(s) => format!("来源：剪贴板 · {} · {} 字", s.at, s.chars),
         None => NO_SELECTION_TIP.to_string(),
-    }
-}
-
-/// pack-meta：没有上下文时，复制出去的就是选区原文
-pub fn meta_text(selection: Option<&Selection>) -> String {
-    match selection {
-        Some(s) => format!("选区原文 {} 字", s.chars),
-        None => String::new(),
     }
 }
 
@@ -122,15 +116,13 @@ mod tests {
     }
 
     #[test]
-    fn status_and_meta_follow_the_model() {
+    fn status_line_follows_the_model() {
         assert_eq!(status_text(None), NO_SELECTION);
         assert_eq!(status_tip(None), NO_SELECTION_TIP);
-        assert_eq!(meta_text(None), "");
 
         let s = from_clipboard("abc", "09:00:00").unwrap();
         assert_eq!(status_text(Some(&s)), "abc");
         assert_eq!(status_tip(Some(&s)), "来源：剪贴板 · 09:00:00 · 3 字");
-        assert_eq!(meta_text(Some(&s)), "选区原文 3 字");
 
         // 首行是空的情况（选中内容以换行开头）
         let blank_first = Selection {

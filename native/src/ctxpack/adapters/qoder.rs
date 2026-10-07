@@ -18,9 +18,9 @@ const SQLITE_ADAPTER: &str = "qoderwork-sqlite@0";
 
 pub struct Qoder;
 
-struct QoderWork;
+pub struct QoderWork;
 
-fn qoder_cn() -> jsonl::JsonlAdapter {
+pub fn qoder_cn_adapter() -> jsonl::JsonlAdapter {
     jsonl::make(AGENT, "qoder-cn-jsonl@0", |home| {
         home_relative(home, &[".qoder-cn", "projects"])
     })
@@ -268,13 +268,13 @@ impl Adapter for Qoder {
                     ..opts.clone()
                 })
             } else {
-                qoder_cn().discover(&DiscoverOpts {
+                qoder_cn_adapter().discover(&DiscoverOpts {
                     limit,
                     ..opts.clone()
                 })
             };
         }
-        let mut refs = qoder_cn().discover(&DiscoverOpts {
+        let mut refs = qoder_cn_adapter().discover(&DiscoverOpts {
             limit,
             ..opts.clone()
         });
@@ -289,7 +289,7 @@ impl Adapter for Qoder {
 
     fn read_transcript(&self, reference: &SessionRef) -> TranscriptResult {
         if reference.file_path.ends_with(".jsonl") {
-            qoder_cn().read_transcript(reference)
+            qoder_cn_adapter().read_transcript(reference)
         } else {
             QoderWork.read_transcript(reference)
         }

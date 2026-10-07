@@ -4,10 +4,16 @@ mod capture;
 mod chip;
 #[allow(dead_code, unused_imports)]
 mod ctxpack;
+// M4 接线中：先允许未被使用的部分存在
+#[allow(dead_code)]
+mod context;
+mod flipped;
 mod geo;
 mod panel;
 mod pasteboard;
 mod settings;
+#[cfg(test)]
+mod test_support;
 mod views;
 
 use objc2::MainThreadMarker;
@@ -25,10 +31,27 @@ fn main() {
     let settings = settings::Settings::shared();
     let anchor = start_anchor(&geometry, settings.position());
 
-    let sites = settings.direct_sites();
+    let app_settings = settings.load();
     let chip = chip::Chip::create(mtm, &geometry, anchor);
-    let panel = panel::Panel::create(mtm, &geometry, anchor, &sites);
-    let controller = app::Controller::new(mtm, geometry, settings, chip, panel, sites);
+    // 站点跟着模式走：会话解读开聊天站，直通开词典站
+    let sites = if app_settings.with_context {
+        &app_settings.chat_sites
+    } else {
+        &app_settings.direct_sites
+    };
+    let panel = panel::Panel::create(
+        mtm,
+        &geometry,
+        anchor,
+        sites,
+        &app_settings.prompts,
+        &app_settings.session_paths,
+        app_settings.redact_paths,
+        app_settings.context_turns,
+        app_settings.with_context,
+        app_settings.active_prompt,
+    );
+    let controller = app::Controller::new(mtm, geometry, settings, chip, panel);
     app::Controller::start(&controller);
     app.run();
 }
