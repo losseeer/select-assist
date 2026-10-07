@@ -37,8 +37,9 @@ objc2-app-kit = { version = "0.3", features = [
     "NSWindow",
     "NSWorkspace",
 ] }
-objc2-foundation = { version = "0.3", features = ["std"] }
+objc2-foundation = { version = "0.3", features = ["std", "NSArray"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# 写回共用文件时保持用户的键序
+serde_json = { version = "1", features = ["preserve_order"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 dirs = "6"
