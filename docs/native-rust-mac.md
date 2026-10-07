@@ -106,9 +106,27 @@ dirs = "6"                                                 # home dir
 
 - **panel 窗口形态**：§3 写的「Titled 可 key」不成立 —— AppKit 在 order-front 时对 titled 窗口跑 `constrainFrameRect`，会把算好的锚点改掉（实测 x<221 一律被推到 221）。改为无边框 `NSPanel` 子类 + `canBecomeKeyWindow`，并在 `sendEvent:` 里复刻 renderer.js「mousedown 命中输入控件才 focusSelf」的语义。
 - **内存目标**：§5 的「≤20MB、冲 10MB」低于本机 AppKit 下限。§6 的 `ps rss` 口径还把共享框架页算进来（实测 76–113MB）。真实口径（`footprint` / phys_footprint）：**空闲 36MB、展开 37MB、最重 42MB**；同机参照 WallpaperAgent 18MB（无窗口）、Dock 57MB、ControlCenter 75MB。快速展开/折叠会瞬时到 71MB，但 20/30 次不再涨、静置 15s 回落到 34MB —— 是 WindowServer 的有界 backing-store 池，不是泄漏。
+  - **UI 走查重做后**（vibrancy 底 + 自绘轨道/胶囊 + 分节发丝），同一台机器重测：**空闲 43–44MB、展开 44MB、开设置并铺开会话列表时瞬时到 80MB。即这轮视觉改造的代价约 +7MB 稳态**，仍是有界池、不随次数增长。README 的口径已按新数改过。
 - **依赖**：§2 的清单外多了 `regex`（redact 的两条模式）与 `serde_json` 的 `preserve_order`（写回 settings.json 必须保持用户键序）。
 - **§2 的 feature 名**（`NSApplicationConstants`/`NSGeometry`/`NSWindowConstants`）在 objc2-app-kit 0.3 里不存在；几何类型来自 `objc2_foundation`。
 - **单实例保护**：§3 要求「原生版内部按 bundle id 查重」，M6 落地为 `main.rs::another_instance_is_running()`；裸二进制（无 bundle id）放行，沙箱并排调试不受影响。
+
+### UI 走查：native 先改了，Electron 未跟（要同步就照这份清单反向移植）
+
+范围按约定只动 `native/`，`packages/` 一个文件没碰。下面每条都是**行为或观感上的分歧点**，不是实现细节。
+
+- **间距改成四档 4pt 网格**：S1 4（光学微调）/ S2 8（组内）/ S3 12（组间）/ S4 16（面板边距）。Electron 是 `padding: 8px 12px 12px` + 组内 gap 8 + 组间 gap 12；native 把左右与底部从 12 提到 16，400pt 宽的内容不再顶到圆角。**移植点**：`style.css` 的 `#panel` padding。
+- **行距分「组内 8 / 组间 12」两档**：native 之前一律 12，把 `.line-slot` 空槽放大成了一个洞；发丝行两侧按组间算。Electron 本来就是这两档，无需改。
+- **`.icon-btn` 22×22 → 24×24**，与 24pt 控件行高对齐；小图标原来的可点面积小于视觉预期。
+- **模式开关换成自绘「轨道 + 滑块 + 裸标签」**。原因不是审美：`NSSegmentedControl` 的选中段（含 `setSelectedSegmentBezelColor`）只在 App 处于激活态时上色，而本面板按设计永不激活，于是「我在哪个模式」这个最重要的信息在真实使用态里读不出来。Electron 用 `aria-selected` + CSS 背景，没这个毛病 —— **这条是 native 的实现性偏差，不建议反向移植**。
+- **设置披露行由实心胶囊改为裸字 + 三角（▸ / ▾ 随开合换字形）**，对齐 CSS `#settings summary` 的注释「plain text + chevron, fill only on hover」。分组标题不该和组里的站点按钮同一个视觉重量。
+- **面板头的 ▾ 去掉底槽**，与右侧同为裸字形的 ✕ 配成一对（chip 的 ▸ 保留底槽：小条上它是唯一的动作入口，两个窗口不同处理是有意的）。
+- **「保存设置」贴右**（CSS `#set-save { margin-left: auto }`：读起来是一个动作，不是又一块草稿框）。native 之前左对齐。
+- **正文高度不再有 240pt 地板**：内容多高就多高，切模式时的高度差交给既有的高度动画。Electron 的 `autoHeight` 从来就没有地板。
+- **组装失败的原因只写一处**：只留会话行的「上下文：<原因>」，状态行不再抄一遍（原来是两行同义的橙色）。**移植点**：删掉 `renderer.js` 里 attach 失败那次 `flashStatus(err, true)`。
+- **提示收回**：非错误 4s、错误 3s，两者都会把状态行清空。Electron 的 `flashStatus` 只清非错误，错误文本会一直挂在 `#ctx-status` 上直到下一次写入。
+
+native **缺**、Electron 有的：`#set-save.dirty::after ●`（草稿与已存设置不一致时的脏点）；以及所有 hover 态（AppKit 侧没做 tracking area，只有按下态反馈）。
 
 ### 合并回 main 的三条路
 

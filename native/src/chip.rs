@@ -3,10 +3,10 @@
 
 use objc2::rc::Retained;
 use objc2::MainThreadMarker;
-use objc2_app_kit::{NSBox, NSButton, NSColor, NSPanel, NSTextField, NSWindowStyleMask};
+use objc2_app_kit::{NSBox, NSPanel, NSTextField, NSWindowStyleMask};
 
 use crate::geo::Geometry;
-use crate::views::{self, BADGE, BUTTON_H, BUTTON_W, GAP, ICON, LINE_H, PAD_X, RADIUS};
+use crate::views::{self, Pill, DOT, GAP, ICON, LINE_H, PAD_X, R_WINDOW, T_BODY};
 
 pub const WIDTH: f64 = 400.0;
 pub const HEIGHT: f64 = 44.0;
@@ -16,11 +16,12 @@ pub const MARGIN_TOP: f64 = 60.0;
 
 pub struct Chip {
     pub window: Retained<NSPanel>,
-    pub dot: Retained<NSButton>,
+    /// ▸ 展开键：带底槽，读起来是个控件而不是一枚字形（走查 V3）
+    pub dot: Pill,
     pub status: Retained<NSTextField>,
     /// 未读小红点：固定 8×8 占位，亮灭都不动布局
     pub badge: Retained<NSBox>,
-    pub capture: Retained<NSButton>,
+    pub capture: Pill,
 }
 
 impl Chip {
@@ -41,26 +42,36 @@ impl Chip {
         blur.addSubview(&views::card(
             mtm,
             views::rect(0.0, 0.0, WIDTH, HEIGHT),
-            RADIUS,
-            &views::rgba(22.0, 22.0, 24.0, 0.4),
-            Some(&views::rgba(255.0, 255.0, 255.0, 0.10)),
+            R_WINDOW,
+            &views::veil(),
+            Some(&views::hairline()),
         ));
 
-        let dot = views::glyph_button(
+        let dot = views::socket_button(
             mtm,
             "\u{25B8}",
             views::rect(PAD_X, (HEIGHT - ICON) / 2.0, ICON, ICON),
         );
-        blur.addSubview(&dot);
+        blur.addSubview(dot.view());
 
-        let capture_x = WIDTH - PAD_X - BUTTON_W;
-        let badge_x = capture_x - GAP - BADGE;
+        let capture =
+            views::primary_pill(mtm, "取入选区", views::rect(0.0, 0.0, 74.0, views::CTRL_H));
+        capture.set_tip(Some("把刚才复制的内容取进来"));
+        let capture_w = capture.frame().size.width;
+        capture.set_frame(views::rect(
+            WIDTH - PAD_X - capture_w,
+            (HEIGHT - views::CTRL_H) / 2.0,
+            capture_w,
+            views::CTRL_H,
+        ));
+        // 未读点固定在按钮左侧的槽位里：亮灭都不动布局，也不会压到按钮文字
+        let badge_x = WIDTH - PAD_X - capture_w - GAP - DOT;
         let status_x = PAD_X + ICON + GAP;
         let status = views::label(
             mtm,
             crate::capture::NO_SELECTION,
-            12.0,
-            &NSColor::secondaryLabelColor(),
+            T_BODY,
+            &views::dim(),
             views::rect(
                 status_x,
                 (HEIGHT - LINE_H) / 2.0,
@@ -70,24 +81,17 @@ impl Chip {
         );
         blur.addSubview(&status);
 
-        // 固定占位的小红点：亮灭都不动布局
         let badge = views::card(
             mtm,
-            views::rect(badge_x, (HEIGHT - BADGE) / 2.0, BADGE, BADGE),
-            BADGE / 2.0,
-            &views::rgba(10.0, 132.0, 255.0, 1.0),
+            views::rect(badge_x, (HEIGHT - DOT) / 2.0, DOT, DOT),
+            DOT / 2.0,
+            &views::accent(),
             None,
         );
         views::set_dot(&badge, false);
         blur.addSubview(&badge);
 
-        let capture = views::push_button(
-            mtm,
-            "取入选区",
-            views::rect(capture_x, (HEIGHT - BUTTON_H) / 2.0, BUTTON_W, BUTTON_H),
-        );
-        views::set_tip(&capture, Some("把刚才复制的内容取进来"));
-        blur.addSubview(&capture);
+        blur.addSubview(capture.view());
 
         // showInactive()：出现但不激活应用
         window.orderFrontRegardless();

@@ -24,7 +24,7 @@ pub struct Display {
 }
 
 /// 与 Electron clampToDisplay 一致：贴边留 8px
-const EDGE: f64 = 8.0;
+pub const EDGE: f64 = 8.0;
 
 /// 显示器断掉后，保存的位置不能把窗口停在屏幕外（照搬 main/index.ts:156）
 pub fn clamp_to_display(b: Rect, displays: &[Display]) -> Rect {
@@ -101,6 +101,11 @@ impl Geometry {
 
     pub fn clamp(&self, r: Rect) -> Rect {
         clamp_to_display(r, &self.displays)
+    }
+
+    /// 离某个左上角坐标最近的那块屏（Electron 的 getDisplayNearestPoint）
+    pub fn display_near(&self, x: f64, y: f64) -> Option<&Display> {
+        nearest(&self.displays, x, y)
     }
 }
 
@@ -196,5 +201,31 @@ mod tests {
             h: 44.0,
         };
         assert_eq!(clamp_to_display(r, &[]), r);
+    }
+
+    /// 面板高度要按「窗口所在那块屏」夹，不是永远按 screens[0]
+    #[test]
+    fn the_nearest_display_wins_not_the_primary_one() {
+        let geometry = Geometry {
+            primary_height: 956.0,
+            displays: vec![
+                display(0.0, 0.0, 1470.0, 956.0),
+                display(-1920.0, 0.0, 1920.0, 1080.0),
+            ],
+        };
+        assert_eq!(
+            geometry.display_near(-1000.0, 60.0).map(|d| d.frame.w),
+            Some(1920.0),
+            "副屏在左边（负 x）也要认得"
+        );
+        assert_eq!(
+            geometry.display_near(100.0, 60.0).map(|d| d.frame.w),
+            Some(1470.0)
+        );
+        let empty = Geometry {
+            primary_height: 0.0,
+            displays: Vec::new(),
+        };
+        assert!(empty.display_near(0.0, 0.0).is_none());
     }
 }

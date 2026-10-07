@@ -31,13 +31,14 @@ pub fn local_time() -> String {
     formatter.stringFromDate(&NSDate::now()).to_string()
 }
 
-/// 只放 http/https（照搬 index.ts 的 site:open），其余返回 false 而不是丢给系统
+/// 只放 http/https（照搬 index.ts 的 site:open：`new URL(url).protocol` 恒为小写），
+/// 其余返回 false 而不是丢给系统
 pub fn open_site(url: &str) -> bool {
     let Some(target) = NSURL::URLWithString(&NSString::from_str(url)) else {
         return false;
     };
     let scheme = target.scheme().map(|s| s.to_string()).unwrap_or_default();
-    if scheme != "https" && scheme != "http" {
+    if !scheme.eq_ignore_ascii_case("https") && !scheme.eq_ignore_ascii_case("http") {
         return false;
     }
     NSWorkspace::sharedWorkspace().openURL(&target)

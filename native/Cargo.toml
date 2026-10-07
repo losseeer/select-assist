@@ -48,6 +48,8 @@ objc2-app-kit = { version = "0.3", features = [
     "NSWindow",
     "NSRunningApplication",
     "NSWorkspace",
+    # 动效曲线：NSAnimationContext.setTimingFunction 的形参是 CAMediaTimingFunction
+    "objc2-quartz-core",
 ] }
 objc2-foundation = { version = "0.3", features = [
     "std",
@@ -66,5 +68,8 @@ serde = { version = "1", features = ["derive"] }
 # 写回共用文件时保持用户的键序
 serde_json = { version = "1", features = ["preserve_order"] }
 regex = "1"
+# 只用到 CAMediaTimingFunction（动效曲线）。它本来就在 Cargo.lock 里
+# （objc2-app-kit 的可选依赖），所以这条不引入新的下载源。
+objc2-quartz-core = "0.3"
 rusqlite = { version = "0.37", features = ["bundled"] }
 dirs = "6"

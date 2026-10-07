@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """跑一轮动作再回窗口真值：`state.py <pid>`（列窗口）或 `state.py <pid> <x> <y>`（先点一下）"""
 import json
+import os
 import subprocess
 import sys
 import time
@@ -10,7 +11,9 @@ import Quartz
 args = sys.argv[1:]
 pid = int(args[0])
 if len(args) >= 3:
-    subprocess.run(["python3", "tools/click.py", args[1], args[2]], check=True)
+    # 按脚本自身位置找 click.py：从仓库根或 native/ 调用都成立
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "click.py")
+    subprocess.run(["python3", here, args[1], args[2]], check=True)
     time.sleep(0.6)
 
 

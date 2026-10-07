@@ -6,7 +6,7 @@ use crate::ctxpack::adapters::codex::Codex;
 use crate::ctxpack::adapters::qoder;
 use crate::ctxpack::adapters::util;
 use crate::ctxpack::adapters::workbuddy::Workbuddy;
-use crate::ctxpack::adapters::{Adapter, DiscoverOpts, SessionRef};
+use crate::ctxpack::adapters::{mtime_ms, Adapter, DiscoverOpts, SessionRef};
 use crate::ctxpack::build::BuildInput;
 use crate::ctxpack::prompt::AssembleInput;
 use crate::ctxpack::types::{Capture, Selection, Source, TranscriptTurn};
@@ -49,26 +49,20 @@ impl AdapterKind {
         }
     }
 
-    /// 设置里 `agent|路径` 的 agent 段
-    pub fn from_token(agent: &str) -> Option<Self> {
+    /// 设置里 `agent|路径` 的 agent 段。qoder 一家两个存储，光看 agent 分不出来，
+    /// 得看路径形态：.db = QoderWork，目录 = CN jsonl
+    pub fn for_path(agent: &str, path: &str) -> Option<Self> {
         match agent {
             "claude-code" => Some(AdapterKind::ClaudeCode),
             "codex" => Some(AdapterKind::Codex),
             "workbuddy" => Some(AdapterKind::Workbuddy),
-            _ => None,
-        }
-    }
-
-    /// qoder 一家两个存储，光看 agent 分不出来，得看路径形态：.db = QoderWork，目录 = CN jsonl
-    pub fn for_path(agent: &str, path: &str) -> Option<Self> {
-        if agent == "qoder" {
-            return Some(if path.replace('\\', "/").ends_with(".db") {
+            "qoder" => Some(if path.replace('\\', "/").ends_with(".db") {
                 AdapterKind::QoderWork
             } else {
                 AdapterKind::QoderCn
-            });
+            }),
+            _ => None,
         }
-        Self::from_token(agent)
     }
 
     fn discover(self, opts: &DiscoverOpts) -> Vec<SessionRef> {
@@ -125,16 +119,6 @@ fn base_name(file: &str) -> String {
         .or_else(|| last.strip_suffix(".db"))
         .unwrap_or(last)
         .to_string()
-}
-
-fn mtime_ms(file: &str) -> Option<f64> {
-    let meta = std::fs::metadata(file).ok()?;
-    let since = meta
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?;
-    Some(since.as_secs_f64() * 1000.0)
 }
 
 /// 单个文件条目：sessionId 只在文件名是 UUID 形状时给出
@@ -335,6 +319,8 @@ impl Pack {
             return;
         }
         self.transcript.clear();
+        // adapter 丢过什么也必须跟着上下文一起清掉，否则直通时字数行会挂着一条不相干的「已省略」
+        self.defaults.clear();
         self.source = None;
         self.context = ContextSummary::default();
     }
@@ -704,6 +690,31 @@ mod tests {
             pack.context.error.as_deref(),
             Some("未发现可用会话文件，将只带选区")
         );
+    }
+
+    /// 切到直通：上下文清掉之后，payload 必须立刻回到「选区原文逐字节」，
+    /// 而且不能留着上一轮 adapter 的省略记录（app.rs 的复制按钮和字数行都读它）。
+    #[test]
+    fn clearing_the_context_falls_back_to_the_bare_selection() {
+        let home = fixture_home();
+        let root = home.home.to_string_lossy().to_string();
+        let settings = settings_for(&root);
+        let file =
+            format!("{root}/.codex/sessions/2026/09/11/rollout-2026-09-11T10-15-33-cx-1.jsonl");
+        let mut pack = Pack::default();
+        pack.set_selection(sel("这个 skill", "t"));
+        pack.attach(&settings, "auto", 8, Some(&file), None);
+        assert!(!pack.transcript.is_empty());
+        pack.clear_context();
+        let payload = pack.payload(&settings).unwrap();
+        assert_eq!(payload.prompt, "这个 skill", "上下文清完还是逐字节原文");
+        assert!(payload.context.is_empty());
+        assert_eq!(
+            payload.dropped,
+            Vec::<String>::new(),
+            "上一轮的省略记录不该跟着"
+        );
+        assert_eq!(payload.meta(), ("选区原文 8 字".to_string(), String::new()));
     }
 
     #[test]

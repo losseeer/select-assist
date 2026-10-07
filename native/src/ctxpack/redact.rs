@@ -29,22 +29,23 @@ pub fn redact_paths(pack: &CtxPack, home: &str) -> CtxPack {
         out.payload = Some(sub(payload, home));
     }
     if let Some(source) = &mut out.source {
-        if source
-            .project_path
-            .as_deref()
-            .is_some_and(|p| !p.is_empty())
-        {
-            source.project_path = Some(sub(source.project_path.as_deref().unwrap(), home));
+        if let Some(path) = &mut source.project_path {
+            if !path.is_empty() {
+                let redacted = sub(path, home);
+                *path = redacted;
+            }
         }
     }
     if let Some(selection) = &mut out.selection {
         if !selection.text.is_empty() {
-            selection.text = sub(&selection.text.clone(), home);
+            let text = sub(&selection.text, home);
+            selection.text = text;
         }
     }
     if let Some(turns) = &mut out.transcript {
         for turn in turns.iter_mut() {
-            turn.text = sub(&turn.text.clone(), home);
+            let text = sub(&turn.text, home);
+            turn.text = text;
         }
     }
     out

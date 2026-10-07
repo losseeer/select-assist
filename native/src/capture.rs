@@ -1,11 +1,14 @@
 //! 选区模型 + 状态文案。M2 只有直通这一条路径：取进来什么，复制回去就是什么。
 //! 逐条对齐 packages/panel/src/main/capture.ts 与 static/renderer.js 的口径。
 
+use crate::ctxpack::utf16;
+
 /// 已取入的选区。`text` 是 trim 之后的原文，直通模式逐字节写回它（不套模板、不脱敏）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Selection {
     pub text: String,
     pub first_line: String,
+    /// JS 的 text.length，即 UTF-16 码元数
     pub chars: usize,
     /// 本地时间 HH:MM:SS，只用于 tooltip
     pub at: String,
@@ -24,18 +27,9 @@ pub const NO_SELECTION_TIP: &str = "在源界面复制，再点「取入选区�
 pub const CAPTURED: &str = "已取入选区";
 pub const CONTEXT_EMPTY: &str = "上下文未填充";
 
-/// Electron 显示的「N 字」是 JS 的 text.length，即 UTF-16 码元数，不是 Rust 的 chars().count()
-pub fn chars_len(text: &str) -> usize {
-    text.encode_utf16().count()
-}
-
+/// JS 的 `text.split('\n')[0]?.slice(0, limit)`：下标按 UTF-16 码元，与 utf16.rs 同一口径
 fn first_line(text: &str, limit: usize) -> String {
-    text.split('\n')
-        .next()
-        .unwrap_or("")
-        .chars()
-        .take(limit)
-        .collect()
+    utf16::head(text.split('\n').next().unwrap_or(""), limit)
 }
 
 /// captureFromClipboard：空白剪贴板（例如复制了一个空行）不算取入，也不能让它把空白当选区存下
@@ -46,14 +40,14 @@ pub fn from_clipboard(text: &str, at: &str) -> Result<Selection, String> {
     Ok(Selection {
         text: text.trim().to_string(),
         first_line: first_line(text, 120),
-        chars: chars_len(text),
+        chars: utf16::len(text),
         at: at.to_string(),
     })
 }
 
 pub fn note_from(text: &str) -> ClipNote {
     ClipNote {
-        chars: chars_len(text),
+        chars: utf16::len(text),
         first_line: first_line(text, 80),
     }
 }
@@ -97,8 +91,8 @@ mod tests {
 
     #[test]
     fn emoji_count_the_same_way_as_js_length() {
-        assert_eq!(chars_len("👍"), 2);
-        assert_eq!(chars_len("中文"), 2);
+        assert_eq!(utf16::len("👍"), 2);
+        assert_eq!(utf16::len("中文"), 2);
     }
 
     #[test]
@@ -113,6 +107,10 @@ mod tests {
                 .count(),
             120
         );
+        // JS 用 slice()，上限数的是 UTF-16 码元而不是字符：一个 emoji 占两格
+        let emoji = format!("{}yz", "👍".repeat(70));
+        assert_eq!(note_from(&emoji).first_line, "👍".repeat(40));
+        assert_eq!(from_clipboard(&emoji, "0").unwrap().chars, 142);
     }
 
     #[test]

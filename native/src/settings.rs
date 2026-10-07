@@ -191,9 +191,10 @@ impl Settings {
         take(&map, "redactPaths", &mut settings.redact_paths);
         take(&map, "contextTurns", &mut settings.context_turns);
         take(&map, "activePrompt", &mut settings.active_prompt);
-        settings.active_prompt = settings
-            .active_prompt
-            .min(settings.prompts.len().saturating_sub(1));
+        // settings.ts:113 —— 越界游标回到第一条，不是最后一条
+        if settings.active_prompt >= settings.prompts.len() {
+            settings.active_prompt = 0;
+        }
         settings
     }
 
@@ -341,6 +342,21 @@ mod tests {
         )
         .unwrap();
         assert_eq!(settings.load().active_prompt, 0, "越界游标退回第一条");
+
+        // 三条指令时越界也必须回到 0：min(len-1) 会偷偷选到最后一条，Electron 不是这么兜的
+        fs::write(
+            &file,
+            r#"{"activePrompt":9,"prompts":[{"name":"A","template":"x"},{"name":"B","template":"y"},{"name":"C","template":"z"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(settings.load().active_prompt, 0);
+        // 范围内的游标原样保留
+        fs::write(
+            &file,
+            r#"{"activePrompt":2,"prompts":[{"name":"A","template":"x"},{"name":"B","template":"y"},{"name":"C","template":"z"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(settings.load().active_prompt, 2);
         fs::remove_file(&file).ok();
     }
 

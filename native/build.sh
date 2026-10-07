@@ -12,7 +12,6 @@ case "${1:-}" in
   *) echo "usage: ./build.sh [--debug|--release]" >&2; exit 2 ;;
 esac
 
-# 系统自带的是 bash 3.2，空数组在 set -u 下展开会直接报 unbound variable
 if [[ $profile == release ]]; then
   cargo build --release
 else

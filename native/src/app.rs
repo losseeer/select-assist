@@ -9,7 +9,7 @@ use block2::RcBlock;
 use objc2::rc::{Retained, Weak};
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DeclaredClass, MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSApplication, NSButton, NSSegmentedControl, NSWindow, NSWindowDelegate};
+use objc2_app_kit::{NSApplication, NSButton, NSWindow, NSWindowDelegate};
 use objc2_foundation::{NSNotification, NSObject, NSObjectProtocol, NSTimer};
 
 use crate::capture::{self, ClipNote};
@@ -25,6 +25,8 @@ use crate::views;
 /// Electron 的轮询周期
 const POLL_SECONDS: f64 = 0.8;
 const ERROR_HOLD: f64 = 3.0;
+/// 成功提示的停留时间，对齐 renderer.js flashStatus 的 4s
+const FLASH_HOLD: f64 = 4.0;
 const COPIED_HOLD: f64 = 1.2;
 const COPY_READ: &str = "复制 Prompt";
 const COPY_DIRECT: &str = "复制选区原文";
@@ -41,8 +43,22 @@ const AGENT_TOKENS: [&str; 6] = [
 
 #[derive(Clone, Copy)]
 enum After {
-    ClearError,
+    ClearFlash,
     ResetCopyLabel,
+    /// 面板长高 / 变矮的一帧（见 relayout）
+    AnimFrame(u32),
+}
+
+/// 高度过渡的帧数与间隔：约 10 × 16ms ≈ 166ms，落在 motion-plan 的
+/// 「面板级状态变化 200ms 上下」这一档
+const ANIM_FRAMES: u32 = 10;
+const ANIM_TICK: f64 = 1.0 / 60.0;
+
+/// 一次高度过渡的两端（正文高度，单位 pt）
+#[derive(Clone, Copy)]
+struct Anim {
+    from: f64,
+    to: f64,
 }
 
 struct State {
@@ -71,6 +87,8 @@ pub struct Ivars {
     chip: Chip,
     panel: Panel,
     state: RefCell<State>,
+    /// 正在进行的高度过渡（None = 没在动）
+    anim: RefCell<Option<Anim>>,
     weak: RefCell<Option<Weak<Controller>>>,
 }
 
@@ -117,11 +135,12 @@ define_class! {
             }
         }
 
+        /// 两段各自带 tag（0=会话解读 / 1=选区直通），点哪段就是哪个模式
         #[unsafe(method(modeChanged:))]
         fn on_mode(&self, sender: Option<&AnyObject>) {
             let read = sender
-                .and_then(|s| s.downcast_ref::<NSSegmentedControl>())
-                .is_none_or(|c| c.selectedSegment() == 0);
+                .and_then(|s| s.downcast_ref::<NSButton>())
+                .is_none_or(|b| b.tag() == 0);
             self.set_mode(read);
         }
 
@@ -130,7 +149,10 @@ define_class! {
             let active = self.ivars().panel.active_prompt();
             self.ivars().state.borrow_mut().app.active_prompt = active;
             self.persist_settings();
-            self.refresh_meta();
+            // 换指令必须重算 payload：Electron 那侧 pack:current / pack:copy 每次都带
+            // settings.get() 现算，native 的 payload 是缓存的，不重算就会复制上一条指令的成品
+            self.recompute_payload();
+            self.relayout();
         }
 
         #[unsafe(method(peChanged:))]
@@ -173,6 +195,7 @@ define_class! {
                 state.settings_open
             };
             self.ivars().panel.set_row(Row::Editor, open);
+            self.ivars().panel.set_settings_open(open);
             self.relayout();
         }
 
@@ -261,6 +284,7 @@ impl Controller {
                 sites_draft,
             }),
             weak: RefCell::new(None),
+            anim: RefCell::new(None),
         });
         unsafe { msg_send![super(this), init] }
     }
@@ -272,22 +296,24 @@ impl Controller {
         let ivars = myself.ivars();
         let target: &AnyObject = myself.as_ref();
         for (button, action) in [
-            (&ivars.chip.dot, sel!(expand:)),
-            (&ivars.chip.capture, sel!(capture:)),
-            (&ivars.panel.collapse, sel!(collapse:)),
-            (&ivars.panel.capture, sel!(capture:)),
-            (&ivars.panel.copy, sel!(copy:)),
-            (&ivars.panel.quit, sel!(quit:)),
-            (&ivars.panel.browse, sel!(browse:)),
-            (&ivars.panel.refresh, sel!(refreshContext:)),
-            (&ivars.panel.settings_toggle, sel!(toggleSettings:)),
-            (&ivars.panel.pe_new, sel!(newPrompt:)),
-            (&ivars.panel.pe_del, sel!(delPrompt:)),
-            (&ivars.panel.set_save, sel!(saveSettings:)),
+            (ivars.chip.dot.button(), sel!(expand:)),
+            (ivars.chip.capture.button(), sel!(capture:)),
+            (ivars.panel.collapse.as_ref(), sel!(collapse:)),
+            (ivars.panel.capture.button(), sel!(capture:)),
+            (ivars.panel.copy.button(), sel!(copy:)),
+            (ivars.panel.quit.as_ref(), sel!(quit:)),
+            (ivars.panel.browse.button(), sel!(browse:)),
+            (ivars.panel.refresh.button(), sel!(refreshContext:)),
+            (ivars.panel.settings_toggle.as_ref(), sel!(toggleSettings:)),
+            (ivars.panel.pe_new.button(), sel!(newPrompt:)),
+            (ivars.panel.pe_del.button(), sel!(delPrompt:)),
+            (ivars.panel.set_save.button(), sel!(saveSettings:)),
         ] {
             views::wire(button, Some(target), action);
         }
-        views::wire(&ivars.panel.mode, Some(target), sel!(modeChanged:));
+        for label in [&ivars.panel.mode_read, &ivars.panel.mode_direct] {
+            views::wire(label, Some(target), sel!(modeChanged:));
+        }
         for pick in [&ivars.panel.agent_pick, &ivars.panel.turns_pick] {
             views::wire(pick, Some(target), sel!(refreshContext:));
         }
@@ -312,8 +338,8 @@ impl Controller {
             return;
         };
         let target: &AnyObject = target.as_ref();
-        for button in ivars.panel.sites() {
-            views::wire(&button, Some(target), sel!(openSite:));
+        for site in ivars.panel.sites() {
+            views::wire(site.button(), Some(target), sel!(openSite:));
         }
     }
 
@@ -393,6 +419,8 @@ impl Controller {
         }
         self.refresh_session_line();
         self.refresh_meta();
+        // 状态行 / 字数行会按内容自己出现或消失，刷完一轮就得问一次高度
+        self.relayout();
     }
 
     fn refresh_session_line(&self) {
@@ -412,7 +440,7 @@ impl Controller {
             Some(payload) => payload.meta(),
         };
         drop(state);
-        views::set_status(&ivars.panel.pack_meta, &text, &tip, false);
+        ivars.panel.set_pack_meta(&text, &tip);
     }
 
     fn notify(&self) {
@@ -433,12 +461,47 @@ impl Controller {
         (rect.x, rect.y)
     }
 
-    /// 内容变了就重量一次高度（Electron 的 autoHeight）
+    /// 内容变了就重量一次高度（Electron 的 autoHeight）。
+    /// 高度差不为 0 时补一段过渡：面板不再「啪」地跳一下，而是长出来 / 收回去。
+    /// 每帧都重画圆角遮罩（arrange_body 里做了），否则角会被拉成椭圆。
     fn relayout(&self) {
         let ivars = self.ivars();
-        if ivars.panel.window.isVisible() {
-            let anchor = self.anchor();
+        if !ivars.panel.window.isVisible() {
+            return;
+        }
+        let anchor = self.anchor();
+        let to = ivars.panel.wanted_body(&ivars.geometry, anchor);
+        let from = ivars.panel.body();
+        if Panel::reduce_motion() || (to - from).abs() < 2.0 {
             ivars.panel.arrange_to_content(&ivars.geometry, anchor);
+            return;
+        }
+        *ivars.anim.borrow_mut() = Some(Anim { from, to });
+        ivars.panel.set_animating(true);
+        self.anim_frame(0);
+    }
+
+    /// 一帧：三次缓出（decelerate，和入场同一条签名曲线），最后一帧落到真实内容高度
+    fn anim_frame(&self, index: u32) {
+        let ivars = self.ivars();
+        let Some(anim) = *ivars.anim.borrow() else {
+            return; // 已被新的一次 relayout 取代
+        };
+        let last = index + 1 >= ANIM_FRAMES;
+        let progress = (index as f64 + 1.0) / ANIM_FRAMES as f64;
+        let eased = 1.0 - (1.0 - progress).powi(3);
+        let body = anim.from + (anim.to - anim.from) * eased;
+        if last {
+            *ivars.anim.borrow_mut() = None;
+            ivars.panel.set_animating(false);
+            ivars
+                .panel
+                .arrange_to_content(&ivars.geometry, self.anchor());
+        } else {
+            ivars
+                .panel
+                .arrange_body(&ivars.geometry, self.anchor(), body);
+            self.after(ANIM_TICK, After::AnimFrame(index + 1));
         }
     }
 
@@ -533,6 +596,7 @@ impl Controller {
             state.last_change = pasteboard::change_count();
         }
         ivars.panel.set_copy_title(COPIED);
+        ivars.panel.set_copy_done(true);
         self.after(COPIED_HOLD, After::ResetCopyLabel);
         self.refresh_meta();
     }
@@ -550,7 +614,6 @@ impl Controller {
             if !read {
                 state.browsing = None;
                 state.pack.clear_context();
-                state.payload = None;
                 ivars.panel.set_row(Row::Browser, false);
             }
         }
@@ -560,8 +623,10 @@ impl Controller {
         if read {
             self.attach(None);
         } else {
+            // 直通的 Payload 就是选区原文，字数行和「复制选区原文」都要它（Electron 同款）
+            self.recompute_payload();
+            // refresh() 自己会 relayout：这里再排一次会让高度动画从头重启
             self.refresh();
-            self.relayout();
         }
     }
 
@@ -594,11 +659,9 @@ impl Controller {
             session.as_deref(),
         );
         self.recompute_payload();
-        let error = ivars.state.borrow().pack.context.error.clone();
-        match error {
-            Some(error) => ivars.panel.set_ctx_status(&error, true),
-            None => ivars.panel.set_ctx_status("", false),
-        }
+        // 失败原因只留一处：会话行本来就写着「上下文：<原因>」，
+        // 状态行再抄一遍就是两行同义的橙色（Electron 那侧是历史遗留，native 不跟）
+        ivars.panel.set_ctx_status("", false);
         self.refresh_session_line();
         self.relayout();
     }
@@ -626,15 +689,16 @@ impl Controller {
 
         let settings = ivars.state.borrow().app.clone();
         let refs = context::browse(&settings, context::BROWSE_LIMIT);
+        // 手动挑过的那条要在列表里打勾：.db 文件里几十个会话共用同一个路径，得连会话 id 一起比
         let selected = ivars.state.borrow().browsing.as_ref().and_then(|b| {
             refs.iter()
-                .find(|r| r.file_path == b.file_path)
-                .map(|r| r.file_path.clone())
+                .find(|r| r.file_path == b.file_path && r.session_id == b.session_id)
+                .cloned()
         });
         ivars.state.borrow_mut().browser_refs = refs.clone();
         ivars
             .panel
-            .show_browser(ivars.mtm, &refs, selected.as_deref());
+            .show_browser(ivars.mtm, &refs, selected.as_ref());
         if refs.is_empty() {
             ivars
                 .panel
@@ -649,7 +713,9 @@ impl Controller {
     fn reload_prompt_editor(&self) {
         let ivars = self.ivars();
         let state = ivars.state.borrow();
-        ivars.panel.reload_prompts(&state.prompts, state.edit_index);
+        ivars
+            .panel
+            .reload_editor_prompts(&state.prompts, state.edit_index);
         let template = state
             .prompts
             .get(state.edit_index)
@@ -699,13 +765,14 @@ impl Controller {
         state.app.redact_paths = panel_text.2;
         state.app.context_turns = panel_text.3;
         let slot = usize::from(!read);
+        // 草稿永远镜像编辑框：无效行得留在原地让用户改，不能被回写后的旧值盖掉
+        state.sites_draft[slot] = panel_text.1.clone();
         if !sites.is_empty() {
             if read {
-                state.app.chat_sites = sites.clone();
+                state.app.chat_sites = sites;
             } else {
-                state.app.direct_sites = sites.clone();
+                state.app.direct_sites = sites;
             }
-            state.sites_draft[slot] = sites_text(&sites);
         }
         state.prompts = state.app.prompts.clone();
         state.edit_index = state.edit_index.min(state.prompts.len().saturating_sub(1));
@@ -752,9 +819,12 @@ impl Controller {
         let is_error = message != "已保存";
         ivars.state.borrow_mut().error = is_error.then(|| message.to_string());
         ivars.panel.set_ctx_status(message, is_error);
-        if is_error {
-            self.after(ERROR_HOLD, After::ClearError);
-        }
+        // 提示会自己收回（Electron 的 flashStatus 对非错误 4s 后清空）。
+        // 状态行现在按内容占位，不收回就是永久多出一行。
+        self.after(
+            if is_error { ERROR_HOLD } else { FLASH_HOLD },
+            After::ClearFlash,
+        );
         self.refresh();
     }
 
@@ -810,25 +880,27 @@ impl Controller {
     }
 
     fn apply(&self, what: After) {
-        let ivars = self.ivars();
         match what {
-            After::ClearError => {
+            After::ClearFlash => {
+                let ivars = self.ivars();
                 ivars.state.borrow_mut().error = None;
+                ivars.panel.set_ctx_status("", false);
                 self.refresh();
             }
             After::ResetCopyLabel => {
-                let read = ivars.state.borrow().app.with_context;
-                ivars
-                    .panel
-                    .set_copy_title(if read { COPY_READ } else { COPY_DIRECT });
+                let read = self.ivars().state.borrow().app.with_context;
+                let panel = &self.ivars().panel;
+                panel.set_copy_title(if read { COPY_READ } else { COPY_DIRECT });
+                panel.set_copy_done(false);
             }
+            After::AnimFrame(index) => self.anim_frame(index),
         }
     }
 
     /// 写的是当前可见那个窗口的左上角坐标 —— 两窗共用同一个锚点，谁可见存谁
     fn persist(&self) {
         let ivars = self.ivars();
-        if ivars.panel.is_entering() {
+        if ivars.panel.is_animating() {
             return;
         }
         let visible = if ivars.chip.window.isVisible() {
@@ -859,27 +931,36 @@ fn sites_text(sites: &[SiteTarget]) -> String {
         .join("\n")
 }
 
+/// 每行 `第一段|第二段`：跳过空行，交出 (1 起的行号, 两段)；没有竖线时第二段是空串
+fn split_pairs(text: &str) -> Vec<(usize, String, String)> {
+    text.lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .map(|(index, line)| {
+            let parts: Vec<&str> = line.split('|').collect();
+            (
+                index + 1,
+                parts[0].trim().to_string(),
+                parts
+                    .get(1)
+                    .map(|p| p.trim())
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+        })
+        .collect()
+}
+
 /// 每行 `agent|路径`，坏行记下来但不打断其它行
 fn parse_session_paths(text: &str) -> (Vec<SessionPath>, Vec<usize>) {
     let mut out = Vec::new();
     let mut bad = Vec::new();
-    for (index, line) in text.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = line.split('|').collect();
-        let agent = parts
-            .first()
-            .map(|a| a.trim().to_lowercase())
-            .unwrap_or_default();
-        let path = parts.get(1).map(|p| p.trim()).unwrap_or_default();
-        if parts.len() >= 2 && AGENT_TOKENS.contains(&agent.as_str()) && !path.is_empty() {
-            out.push(SessionPath {
-                agent,
-                path: path.to_string(),
-            });
+    for (line, agent, path) in split_pairs(text) {
+        let agent = agent.to_lowercase();
+        if AGENT_TOKENS.contains(&agent.as_str()) && !path.is_empty() {
+            out.push(SessionPath { agent, path });
         } else {
-            bad.push(index + 1);
+            bad.push(line);
         }
     }
     (out, bad)
@@ -889,24 +970,20 @@ fn parse_session_paths(text: &str) -> (Vec<SessionPath>, Vec<usize>) {
 fn parse_sites(text: &str) -> (Vec<SiteTarget>, Vec<usize>) {
     let mut out = Vec::new();
     let mut bad = Vec::new();
-    for (index, line) in text.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = line.split('|').collect();
-        let name = parts.first().map(|n| n.trim()).unwrap_or_default();
-        let url = parts.get(1).map(|u| u.trim()).unwrap_or_default();
-        let scheme_ok = url.starts_with("http://") || url.starts_with("https://");
-        if parts.len() >= 2 && !name.is_empty() && scheme_ok {
-            out.push(SiteTarget {
-                name: name.to_string(),
-                url: url.to_string(),
-            });
+    for (line, name, url) in split_pairs(text) {
+        if !name.is_empty() && has_http_scheme(&url) {
+            out.push(SiteTarget { name, url });
         } else {
-            bad.push(index + 1);
+            bad.push(line);
         }
     }
     (out, bad)
+}
+
+/// 对应 renderer.js 的 `/^https?:\/\//i`：大写协议同样算数
+fn has_http_scheme(url: &str) -> bool {
+    let lowered = url.to_ascii_lowercase();
+    lowered.starts_with("http://") || lowered.starts_with("https://")
 }
 
 #[cfg(test)]
@@ -915,12 +992,15 @@ mod tests {
 
     #[test]
     fn session_path_lines_parse_like_the_renderer() {
-        let (paths, bad) =
-            parse_session_paths("qoder|/tmp/a\nproject|/tmp/b\nbogus|/x\n\nauto|/tmp/c");
-        assert_eq!(paths.len(), 3);
+        let (paths, bad) = parse_session_paths(
+            "qoder|/tmp/a\nproject|/tmp/b\nbogus|/x\n\nAUTO|/tmp/c\nCodex|/tmp/d\n没有竖线",
+        );
+        assert_eq!(paths.len(), 4);
         assert_eq!(paths[0].agent, "qoder");
         assert_eq!(paths[1].agent, "project");
-        assert_eq!(bad, vec![3]);
+        assert_eq!(paths[2].agent, "auto", "agent 段大小写不敏感");
+        assert_eq!(paths[3].agent, "codex");
+        assert_eq!(bad, vec![3, 7], "空行跳过，坏行报原始行号");
     }
 
     #[test]
@@ -928,5 +1008,19 @@ mod tests {
         let (sites, bad) = parse_sites("Google|https://www.google.com/\n坏行 no pipe\nfile|file:///etc/hosts\nDeepL|http://www.deepl.com");
         assert_eq!(sites.len(), 2);
         assert_eq!(bad, vec![2, 3]);
+    }
+
+    #[test]
+    fn an_uppercase_scheme_is_still_a_site() {
+        // renderer.js 用 /^https?:\/\//i，大写不能算坏行
+        let (sites, bad) = parse_sites(
+            "Google|HTTPS://www.google.com/\nBing|HTTP://www.bing.com/\n|https://缺名字.com/",
+        );
+        assert_eq!(bad, vec![3]);
+        assert_eq!(
+            sites[0].url, "HTTPS://www.google.com/",
+            "URL 原样存，不改写大小写"
+        );
+        assert_eq!(sites[1].name, "Bing");
     }
 }
