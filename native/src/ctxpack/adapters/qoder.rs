@@ -8,14 +8,14 @@ use serde_json::Value;
 
 use crate::ctxpack::adapters::jsonl::{self, home_relative};
 use crate::ctxpack::adapters::util::{self, RawTurn};
-use crate::ctxpack::adapters::{
-    note_dropped, sort_by_mtime, Adapter, DiscoverOpts, SessionRef, TranscriptResult,
-};
+use crate::ctxpack::adapters::{note_dropped, Adapter, DiscoverOpts, SessionRef, TranscriptResult};
 
 const AGENT: &str = "qoder";
-const COMPOSITE: &str = "qoder-composite@0";
 const SQLITE_ADAPTER: &str = "qoderwork-sqlite@0";
 
+/// 复合入口（目录→CN jsonl、.db→QoderWork）：面板实际按路径形态自己分派（context.rs 的
+/// AdapterKind::for_path），这里只作为 TS 那条 composite 用例的载体留着。
+#[cfg(test)]
 pub struct Qoder;
 
 pub struct QoderWork;
@@ -113,14 +113,6 @@ fn open_readonly(file: &str) -> Option<Connection> {
 }
 
 impl Adapter for QoderWork {
-    fn agent(&self) -> &str {
-        AGENT
-    }
-
-    fn adapter(&self) -> &str {
-        SQLITE_ADAPTER
-    }
-
     fn discover(&self, opts: &DiscoverOpts) -> Vec<SessionRef> {
         let file = opts.root.clone().unwrap_or_else(|| {
             qoder_work_db_path(opts.home.as_deref())
@@ -249,15 +241,8 @@ impl Adapter for QoderWork {
     }
 }
 
+#[cfg(test)]
 impl Adapter for Qoder {
-    fn agent(&self) -> &str {
-        AGENT
-    }
-
-    fn adapter(&self) -> &str {
-        COMPOSITE
-    }
-
     fn discover(&self, opts: &DiscoverOpts) -> Vec<SessionRef> {
         let limit = opts.limit();
         // 显式 root 只指向两个 qoder 存储里的某一个
@@ -282,7 +267,7 @@ impl Adapter for Qoder {
             limit,
             ..opts.clone()
         }));
-        sort_by_mtime(&mut refs);
+        crate::ctxpack::adapters::sort_by_mtime(&mut refs);
         refs.truncate(limit);
         refs
     }

@@ -87,3 +87,39 @@ dirs = "6"                                                 # home dir
 - AppKit 细节坑：非激活面板的首击语义、`NSPanel` 默认关窗即释放（`isReleasedWhenAnimated=false`）、vibrancy 下自绘文字对比度（沿用现有 `--bg` 遮罩思路加半透明层）。
 - 双版本共存写同一 settings.json：开发期约定"跑原生版前先退 Electron 版"；若长期共存，再加文件锁或分文件。
 - Windows 原生分支**暂不启动**，等 macOS 分支到 M4 验证路线成立后再立项。
+
+## 8. 交付状态与合并策略（M6，2026-10-07）
+
+### 里程碑验收结果
+
+| 里程碑 | 状态 | 验收方式 |
+| --- | --- | --- |
+| M0 骨架 | ✅ | `screencapture -l` 截图 + Finder ⌘⇧G 探针证明键盘焦点没被抢 |
+| M1 双窗 | ✅ | 同锚点高度切换、`drag.py` 拖动、位置回写 settings.json、启动 clamp（含负坐标副屏单测） |
+| M2 直通闭环 | ✅ | 800ms `changeCount` 轮询 + 未读点；取入→复制逐字节比对（含首尾空白与内部双空格） |
+| M3 ctxpack | ✅ | ctxpack 46 项 Rust 单测（全 crate 76 项），其中 `matches_typescript_reference_output` 与 TS 输出逐字比对（golden 文件 `native/fixtures/parity-ts.json`） |
+| M4 会话解读 UI | ✅ | 真实会话（qoder / workbuddy）浏览—点选—填充—组装—复制全链路截图验收；设置编辑器按模式显隐 + 保存回写 |
+| M5 内存与打磨 | ✅ | 入场动画连拍帧取证；Reduce Motion 打开后无中间态；按下态像素对照 |
+| M6 交付 | ✅ | `build.sh` 出包 + 签名校验；本文 §8；README「原生版」一节 |
+
+### 与计划的偏差（都是实测逼出来的，不是随手改的）
+
+- **panel 窗口形态**：§3 写的「Titled 可 key」不成立 —— AppKit 在 order-front 时对 titled 窗口跑 `constrainFrameRect`，会把算好的锚点改掉（实测 x<221 一律被推到 221）。改为无边框 `NSPanel` 子类 + `canBecomeKeyWindow`，并在 `sendEvent:` 里复刻 renderer.js「mousedown 命中输入控件才 focusSelf」的语义。
+- **内存目标**：§5 的「≤20MB、冲 10MB」低于本机 AppKit 下限。§6 的 `ps rss` 口径还把共享框架页算进来（实测 76–113MB）。真实口径（`footprint` / phys_footprint）：**空闲 36MB、展开 37MB、最重 42MB**；同机参照 WallpaperAgent 18MB（无窗口）、Dock 57MB、ControlCenter 75MB。快速展开/折叠会瞬时到 71MB，但 20/30 次不再涨、静置 15s 回落到 34MB —— 是 WindowServer 的有界 backing-store 池，不是泄漏。
+- **依赖**：§2 的清单外多了 `regex`（redact 的两条模式）与 `serde_json` 的 `preserve_order`（写回 settings.json 必须保持用户键序）。
+- **§2 的 feature 名**（`NSApplicationConstants`/`NSGeometry`/`NSWindowConstants`）在 objc2-app-kit 0.3 里不存在；几何类型来自 `objc2_foundation`。
+- **单实例保护**：§3 要求「原生版内部按 bundle id 查重」，M6 落地为 `main.rs::another_instance_is_running()`；裸二进制（无 bundle id）放行，沙箱并排调试不受影响。
+
+### 合并回 main 的三条路
+
+`native/` 是独立 Cargo 包、不碰 `packages/`、不碰 `pnpm` 工作区，所以合并成本与顺序无关：
+
+1. **保持实验分支（默认）** —— main 继续只演 Electron 版。适合「想看内存/体积收益，但产品形态还没定」。分支已随本文件携带全部上下文，随时可续。
+2. **整体并入 main（推荐在 Electron 版仍为主发布通道时采用）** —— 一次性 squash，把 `native/` 与本文一起落到 main：
+   ```bash
+   git switch main && git merge --squash native/rust-mac && git commit -m "feat(native): add Rust + AppKit experimental macOS build"
+   ```
+   之所以用 squash 而不是 merge commit：分支里有按里程碑切分的过程性提交（含 M4 的返工），对 main 的历史没有信息量。合并后 Electron 版发布流程完全不变，`native/` 只是仓库里多出来的第二个可构建目标。
+3. **反向替换（暂不建议）** —— 用原生版取代 Electron 版作为 mac 发布物。缺的前置条件：Windows 原生分支还没立项（§7 明确等 mac 路线验证后再说）、未做代码签名/公证（现网用户拿到的是 ad-hoc 包）、以及 §5 的「日常可替换」只在 mac 上成立。
+
+**共同前提**：两版共用一份 settings.json，长期双跑要先解决双写（文件锁或分文件，§7 已列）。合并动作由维护者本人执行，本仓库约定 agent 不代为提交/推送。

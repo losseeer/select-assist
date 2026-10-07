@@ -49,18 +49,6 @@ impl AdapterKind {
         }
     }
 
-    pub fn from_id(adapter: &str) -> Option<Self> {
-        [
-            AdapterKind::ClaudeCode,
-            AdapterKind::Codex,
-            AdapterKind::Workbuddy,
-            AdapterKind::QoderCn,
-            AdapterKind::QoderWork,
-        ]
-        .into_iter()
-        .find(|kind| kind.id() == adapter)
-    }
-
     /// 设置里 `agent|路径` 的 agent 段
     pub fn from_token(agent: &str) -> Option<Self> {
         match agent {
@@ -257,11 +245,6 @@ pub struct ContextSummary {
     pub basis: Option<String>,
     pub turns_included: usize,
     pub error: Option<String>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct BrowseEntry {
-    pub reference: SessionRef,
 }
 
 /// 会话浏览器：设置里列了什么就扫什么，新→旧

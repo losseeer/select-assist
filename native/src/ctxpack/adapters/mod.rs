@@ -56,8 +56,6 @@ impl DiscoverOpts {
 }
 
 pub trait Adapter {
-    fn agent(&self) -> &str;
-    fn adapter(&self) -> &str;
     /// 新→旧；给了 cwd 就按 cwd 收窄，root 覆盖内置扫描位置
     fn discover(&self, opts: &DiscoverOpts) -> Vec<SessionRef>;
     fn read_transcript(&self, reference: &SessionRef) -> TranscriptResult;

@@ -40,14 +40,6 @@ fn texts_of(record: &Value) -> Vec<String> {
 }
 
 impl Adapter for Workbuddy {
-    fn agent(&self) -> &str {
-        AGENT
-    }
-
-    fn adapter(&self) -> &str {
-        ADAPTER
-    }
-
     fn discover(&self, opts: &DiscoverOpts) -> Vec<SessionRef> {
         let projects_dir = opts.root.clone().unwrap_or_else(|| {
             home_relative(opts.home.as_deref(), &[".workbuddy", "projects"])

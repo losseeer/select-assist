@@ -84,14 +84,6 @@ pub struct JsonlAdapter {
 }
 
 impl Adapter for JsonlAdapter {
-    fn agent(&self) -> &str {
-        self.agent_name
-    }
-
-    fn adapter(&self) -> &str {
-        self.adapter_id
-    }
-
     fn discover(&self, opts: &DiscoverOpts) -> Vec<SessionRef> {
         let projects_dir = opts.root.clone().unwrap_or_else(|| {
             (self.projects_dir)(opts.home.as_deref())

@@ -46,6 +46,7 @@ objc2-app-kit = { version = "0.3", features = [
     "NSView",
     "NSVisualEffectView",
     "NSWindow",
+    "NSRunningApplication",
     "NSWorkspace",
 ] }
 objc2-foundation = { version = "0.3", features = [
@@ -59,6 +60,7 @@ objc2-foundation = { version = "0.3", features = [
     "NSRunLoop",
     "NSTimer",
     "NSURL",
+    "NSBundle",
 ] }
 serde = { version = "1", features = ["derive"] }
 # 写回共用文件时保持用户的键序

@@ -93,14 +93,6 @@ fn codex_home(home: Option<&str>) -> PathBuf {
 }
 
 impl Adapter for Codex {
-    fn agent(&self) -> &str {
-        AGENT
-    }
-
-    fn adapter(&self) -> &str {
-        ADAPTER
-    }
-
     fn discover(&self, opts: &DiscoverOpts) -> Vec<SessionRef> {
         let sessions_root = opts
             .root

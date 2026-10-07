@@ -1,12 +1,8 @@
 mod app;
 mod capture;
-// M4 接上会话解读 UI 之前，ctxpack 只被自己的测试用到
 mod chip;
-#[allow(dead_code, unused_imports)]
-mod ctxpack;
-// M4 接线中：先允许未被使用的部分存在
-#[allow(dead_code)]
 mod context;
+mod ctxpack;
 mod flipped;
 mod geo;
 mod panel;
@@ -17,7 +13,8 @@ mod test_support;
 mod views;
 
 use objc2::MainThreadMarker;
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSRunningApplication};
+use objc2_foundation::NSBundle;
 
 use crate::geo::{Geometry, Rect};
 
@@ -26,6 +23,10 @@ fn main() {
     let app = NSApplication::sharedApplication(mtm);
     // 与 Electron 版的常驻圆点一样：不占 Dock、不进 ⌘Tab
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    if another_instance_is_running() {
+        eprintln!("select-assist-native: 已经有一个在跑了，这个实例退出");
+        return;
+    }
 
     let geometry = Geometry::current(mtm);
     let settings = settings::Settings::shared();
@@ -54,6 +55,18 @@ fn main() {
     let controller = app::Controller::new(mtm, geometry, settings, chip, panel);
     app::Controller::start(&controller);
     app.run();
+}
+
+/// §3：同一 bundle id 只留一个实例。两版共用一份 settings.json，两个 chip 各自
+/// read-modify-write 会互相盖掉位置与设置。裸二进制（`cargo run`、target/debug/…）
+/// 没有 bundle id，跳过这道检查，沙箱并排调试照旧。
+fn another_instance_is_running() -> bool {
+    let Some(id) = NSBundle::mainBundle().bundleIdentifier() else {
+        return false;
+    };
+    let mine = std::process::id() as i32;
+    let same = NSRunningApplication::runningApplicationsWithBundleIdentifier(&id);
+    (0..same.count()).any(|i| same.objectAtIndex(i).processIdentifier() != mine)
 }
 
 /// 启动锚点（窗口左上角的全局坐标）：settings 里存的优先，否则主屏 workArea 右上角内缩 16/60；

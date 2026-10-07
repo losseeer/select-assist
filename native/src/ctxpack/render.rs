@@ -96,8 +96,6 @@ fn clean_v1(pack: &CtxPack, _dropped: &[String]) -> String {
     turns.iter().map(user_line).collect::<Vec<_>>().join("\n\n")
 }
 
-pub const TEMPLATES: [&str; 3] = ["plain/v1", "markdown/v1", "clean/v1"];
-
 pub fn render(pack: &CtxPack, template_id: &str, dropped: &[String]) -> String {
     match template_id {
         "plain/v1" => plain_v1(pack, dropped),

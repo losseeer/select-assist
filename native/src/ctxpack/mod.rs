@@ -6,19 +6,22 @@ pub mod build;
 pub mod prompt;
 pub mod redact;
 pub mod render;
-pub mod tests;
+
 pub mod time;
 pub mod types;
 pub mod utf16;
+// 契约校验器只有规格测试在用（Electron 侧同理），不进交付二进制
+#[cfg(test)]
 pub mod validate;
 
-pub use adapters::{DiscoverOpts, SessionRef, TranscriptResult};
-pub use build::{build_pack, BuildInput, DEFAULT_MAX_CHARS};
-pub use prompt::{assemble_prompt, AssembleInput, Assembled};
+#[cfg(test)]
+mod tests;
+
+// 只转出真正被面板用到的名字；其余走 crate::ctxpack::<module>::<item> 原路径
+pub use adapters::SessionRef;
+pub use build::build_pack;
 pub use redact::redact_paths;
 pub use render::render;
-pub use types::{Capture, CtxPack, Limits, Selection, Source, TranscriptTurn, PACK_FORMAT};
-pub use validate::{validate_pack, ValidationResult};
 
 use crate::ctxpack::adapters::util::match_cwd;
 
