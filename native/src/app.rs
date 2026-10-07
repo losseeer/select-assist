@@ -11,7 +11,7 @@ use objc2::rc::{Retained, Weak};
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DeclaredClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSButton, NSWindow, NSWindowDelegate};
-use objc2_foundation::{NSNotification, NSObject, NSObjectProtocol, NSTimer};
+use objc2_foundation::{NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSTimer};
 
 use crate::capture::{self, ClipNote};
 use crate::chip::{self, Chip};
@@ -191,6 +191,11 @@ define_class! {
             self.relayout();
         }
 
+        #[unsafe(method(settingsEdited:))]
+        fn on_settings_edited(&self, _sender: Option<&AnyObject>) {
+            self.sync_dirty();
+        }
+
         #[unsafe(method(toggleSettings:))]
         fn on_toggle_settings(&self, _sender: Option<&AnyObject>) {
             let open = {
@@ -282,7 +287,7 @@ impl Controller {
                 error: None,
                 browsing: None,
                 browser_refs: Vec::new(),
-                settings_open: false,
+                settings_open: true,
                 prompts,
                 edit_index,
                 sites_draft,
@@ -324,6 +329,25 @@ impl Controller {
         }
         views::wire(&ivars.panel.prompt_pick, Some(target), sel!(promptChanged:));
         views::wire(&ivars.panel.pe_pick, Some(target), sel!(peChanged:));
+        views::wire(&ivars.panel.set_redact, Some(target), sel!(settingsEdited:));
+        // 文本框没有 action 可用（NSTextView 只在失去焦点 / 回车时发），改一个字就得更新脏点，
+        // 只能挂 NSTextDidChangeNotification
+        for field in [
+            &ivars.panel.pe_tpl,
+            &ivars.panel.set_sessions,
+            &ivars.panel.set_sites,
+        ] {
+            let observer: &AnyObject = target;
+            let object: &AnyObject = field;
+            unsafe {
+                NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
+                    observer,
+                    sel!(settingsEdited:),
+                    Some(objc2_app_kit::NSTextDidChangeNotification),
+                    Some(object),
+                );
+            }
+        }
         myself.wire_sites();
         myself.wire_browser_rows();
         let delegate = Some(ProtocolObject::from_ref(myself));
@@ -392,6 +416,8 @@ impl Controller {
             .panel
             .set_sites_text(&state.sites_draft[if read { 0 } else { 1 }]);
         ivars.panel.set_row(Row::Editor, state.settings_open);
+        // 三角得跟着行一起同步：只在点「设置」时改字形，恢复出展开态就会写着 ▸
+        ivars.panel.set_settings_open(state.settings_open);
         ivars
             .panel
             .set_copy_title(if read { COPY_READ } else { COPY_DIRECT });
@@ -764,6 +790,47 @@ impl Controller {
         drop(state);
         ivars.panel.set_template_text(&template);
         ivars.panel.prompt_count(index, total);
+        // 编辑框刚被填成草稿的样子，这一刻就是「干净」的基准；启动与每次改动都从这里过一遍
+        self.sync_dirty();
+    }
+
+    /// 草稿脏点：把「现在点保存会写出去的那份」按 save_settings 同样的取舍现算一遍再比。
+    /// 不用 Electron 那套「输入过就算脏」的事件计数 —— 改了又改回去就该回到干净。
+    fn sync_dirty(&self) {
+        let ivars = self.ivars();
+        let panel = &ivars.panel;
+        let (paths, _) = parse_session_paths(&panel.session_paths_text());
+        let (sites, _) = parse_sites(&panel.sites_text());
+        let saved = ivars.state.borrow().app.clone();
+        // 只读不写：以前这里是先 commit_template() 把编辑框折回草稿再比，而启动时
+        // sync_from_state 跑在 reload_prompt_editor 之前，编辑框还是空的 —— 于是把草稿里
+        // 真实的模板抹成了空串，模板框从此一片空白（还会在保存时把用户的指令一起抹掉）。
+        let mut prompts: Vec<PromptTemplate> = ivars.state.borrow().prompts.clone();
+        let typed = panel.template_text().trim().to_string();
+        let edit_index = ivars.state.borrow().edit_index;
+        if let Some(current) = prompts.get_mut(edit_index) {
+            current.template = typed;
+        }
+        let prompts: Vec<PromptTemplate> = prompts
+            .into_iter()
+            .filter(|p| !p.name.is_empty() && !p.template.is_empty())
+            .collect();
+        let mut draft = saved.clone();
+        if !prompts.is_empty() {
+            draft.prompts = prompts;
+        }
+        draft.session_paths = paths;
+        draft.redact_paths = panel.redact_on();
+        draft.context_turns = panel.turns();
+        if !sites.is_empty() {
+            if draft.with_context {
+                draft.chat_sites = sites;
+            } else {
+                draft.direct_sites = sites;
+            }
+        }
+        let d = draft != saved;
+        panel.set_save_dirty(d);
     }
 
     /// 把编辑框里的改动写回草稿（切指令、保存前都要先做）

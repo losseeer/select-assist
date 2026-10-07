@@ -187,16 +187,16 @@ pub fn card(
 /// NSBox 不裁子视图 —— 实测标题就画在缩进区上方）。
 pub fn face(host: &NSBox) -> NSRect {
     let outer = host.frame().size;
-    host.contentView()
-        .map_or(rect(0.0, 0.0, outer.width, outer.height), |content| {
-            let inner = content.bounds().size;
-            rect(
-                (inner.width - outer.width) / 2.0,
-                (inner.height - outer.height) / 2.0,
-                outer.width,
-                outer.height,
-            )
-        })
+    match host.contentView() {
+        // 用 contentView 在盒子里的真实原点，别拿「(内宽 − 外宽) / 2」去猜：
+        // NSBox 的四边缩进不对称，取平均会让整组子视图一起偏出盒子中心
+        // （实测模式轨道里的滑块与两段文字整体比轨道中线高约 5pt）。
+        Some(content) => {
+            let inner = content.frame();
+            rect(-inner.origin.x, -inner.origin.y, outer.width, outer.height)
+        }
+        None => rect(0.0, 0.0, outer.width, outer.height),
+    }
 }
 
 /// 组间发丝：CSS 的 #ctx-group/#act-group/#settings { border-top: 1px solid --line }
@@ -497,7 +497,12 @@ fn configure(window: &NSPanel) {
     // 圆角由毛玻璃图层与 NSBox 负责，所以窗口自身不画圆角、也不画背景
     window.setOpaque(false);
     window.setBackgroundColor(Some(&NSColor::clearColor()));
-    window.setHasShadow(true);
+    // 不开窗口投影：无边框窗口的投影按**矩形**内容轮廓算，四角外缘会留下一圈没被投影
+    // 盖到的亮直角（背后是浅色窗口时特别明显）。图层 cornerRadius 只裁绘制，改不了投影
+    // 形状；NSWindow.setContentShape: 在这台系统上直接抛 ObjC 异常（Rust 接不住，当场 abort）；
+    // 回到从前的 maskImage 也没用 —— 拿 HEAD 那版逐像素比对过，四角同样有。
+    // 关掉之后靠 1px 发丝描边 + veil 仍然分得清层次，见 docs §8。
+    window.setHasShadow(false);
     window.setLevel(NSFloatingWindowLevel);
     // 等价于 alwaysOnTop + setVisibleOnAllWorkspaces({ visibleOnFullScreen: true })
     window.setCollectionBehavior(

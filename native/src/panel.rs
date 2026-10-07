@@ -26,7 +26,7 @@ use crate::settings::{PromptTemplate, SessionPath, SiteTarget};
 use crate::views::Pill;
 use crate::views::{
     self, CTRL_H, DOT, GAP, HEAD_H, ICON, LINE_H, PAD_BOTTOM, PAD_TOP, PAD_X, ROW_GAP, R_CTRL,
-    R_FIELD, R_WINDOW, S1, S2, S3, T_BODY, T_HEAD, T_META,
+    R_FIELD, R_WINDOW, S1, S2, T_BODY, T_HEAD, T_META,
 };
 
 pub const WIDTH: f64 = 400.0;
@@ -127,6 +127,8 @@ pub struct Panel {
     pub sites_label: Retained<NSTextField>,
     sites_box: Retained<NSBox>,
     pub set_sites: Retained<NSTextView>,
+    /// 草稿脏点（CSS: #set-save.dirty::after ●）
+    save_dot: Retained<NSBox>,
     pub set_save: Pill,
     sites: RefCell<Vec<Pill>>,
     /// 动画进行中（入场、退场、长高变矮都算）：这几帧内的 windowDidMove 不算用户挪窗口。
@@ -211,22 +213,6 @@ fn both_sizable() -> objc2_app_kit::NSAutoresizingMaskOptions {
 }
 
 /// 子视图跟着盒子一起长：NSBox 的排版面是它的 contentView
-/// 让盒子里的内容按它自己的 contentView 重算一次尺寸。
-/// NSBox 的内容缩进要等盒子排过布局才是真值，只在构造时量会拿到「还没缩」的面 ——
-/// 胶囊那边改成每次摆放重算（见 views::Pill::set_frame），输入框只在创建时算过一次，
-/// 所以在编辑器排完版之后统一补一次。
-fn refit_box(host: &NSBox) {
-    let Some(content) = host.contentView() else {
-        return;
-    };
-    let bounds = content.bounds();
-    for inner in content.subviews().iter() {
-        if let Some(view) = inner.downcast_ref::<NSView>() {
-            view.setFrame(bounds);
-        }
-    }
-}
-
 fn host_box_add(host: &NSBox, view: &NSView) {
     view.setAutoresizingMask(both_sizable());
     match host.contentView() {
@@ -252,7 +238,12 @@ fn text_field(
     );
     views::set_tip(&host, tip);
     let scroll = NSScrollView::new(mtm);
-    scroll.setFrame(views::face(&host));
+    // 必须在 setDocumentView 之前定尺寸：滚动区是先按自己当前的框给文档视图（NSTextView）
+    // 分空间的，事后再撑开不会回头重排文档 —— 实测模板框整个空白，文字落在零高的文档里。
+    // 铺满 contentView 本身，不是盒子的 frame：那 6pt 缩进就是输入框的留白。
+    if let Some(content) = host.contentView() {
+        scroll.setFrame(content.bounds());
+    }
     scroll.setBorderType(NSBorderType::NoBorder);
     scroll.setHasVerticalScroller(true);
     scroll.setAutohidesScrollers(true);
@@ -265,8 +256,15 @@ fn text_field(
     text.setTextColor(Some(&views::ink()));
     text.setMinSize(NSSize::new(0.0, 0.0));
     text.setMaxSize(NSSize::new(f64::MAX, f64::MAX));
-    // 内边距交给 textContainerInset，盒子的圆角才不会被首行文字顶到
-    text.setTextContainerInset(NSSize::new(S3, S1 + 2.0));
+    // 视觉留白 = 盒子的 6pt 缩进 + 这里的 textContainerInset。CSS 是 padding: 4px 8px，
+    // 所以横向补 2pt（6+2=8）、纵向不再加（缩进已经给了 6pt）。
+    // lineFragmentPadding 默认还有 5pt，不清掉就会叠加（实测左内边距 22.5pt，
+    // 比设计值多出一整级，首行像被硬缩进去）
+    text.setTextContainerInset(NSSize::new(S2 - 6.0, 0.0));
+    let container = unsafe { text.textContainer() };
+    if let Some(container) = container.as_ref() {
+        container.setLineFragmentPadding(0.0);
+    }
     scroll.setDocumentView(Some(&text));
     host_box_add(&host, &scroll);
     (host, text)
@@ -436,12 +434,7 @@ impl Panel {
         };
         let mode_read = segment("会话解读", 0, "带会话历史组装 Prompt");
         let mode_direct = segment("选区直通", 1, "逐字节原文，翻译 / 检索即用");
-        // 滑块在下、标签在上：同一个坐标面，两者才对得齐
-        if let Some(face) = mode_track.contentView() {
-            face.addSubview(&mode_thumb);
-            face.addSubview(&mode_read);
-            face.addSubview(&mode_direct);
-        }
+
         let selects = container(mtm, CTRL_H);
         let agent_pick = popup(
             mtm,
@@ -459,6 +452,12 @@ impl Panel {
         selects.addSubview(&turns_pick);
         let mode_row = container(mtm, CTRL_H);
         mode_row.addSubview(&mode_track);
+        // 滑块与两段标签挂在「行」上，不挂进轨道盒子的 contentView：NSBox 会在自己
+        // 布局时把 contentView 挪到缩进位置（实测 (6,6)），已经放进去的子视图跟着平移，
+        // 整组比轨道高出 5pt、右边顶出盒子外。同层的兄弟视图没人挪，坐标就是它自己的。
+        mode_row.addSubview(&mode_thumb);
+        mode_row.addSubview(&mode_read);
+        mode_row.addSubview(&mode_direct);
         mode_row.addSubview(&selects);
 
         // 2 上下文动作行
@@ -596,11 +595,20 @@ impl Panel {
         );
         let (sites_box, set_sites) = text_field(mtm, FIELD, Some("每行：名称|URL"));
         let set_save = views::primary_pill(mtm, "保存设置", views::rect(0.0, 0.0, 72.0, CTRL_H));
+        let save_dot = views::card(
+            mtm,
+            views::rect(0.0, 0.0, DOT, DOT),
+            DOT / 2.0,
+            &views::warn(),
+            None,
+        );
+        save_dot.setHidden(true);
         for view in [
             &editor_ctx as &NSView,
             &sites_label,
             &sites_box,
             set_save.view(),
+            &save_dot,
         ] {
             editor.addSubview(view);
         }
@@ -732,6 +740,7 @@ impl Panel {
             sites_box,
             set_sites,
             set_save,
+            save_dot,
             sites: RefCell::new(Vec::new()),
             animating: Rc::new(Cell::new(false)),
         };
@@ -941,6 +950,12 @@ impl Panel {
 
     pub fn set_pack_meta(&self, text: &str, tip: &str) {
         views::set_status(&self.pack_meta, text, tip, false);
+    }
+
+    /// 用 hidden 而不是 alphaValue：这颗点在滚动区的翻转视图里，
+    /// 非 layer 视图 0→1 不重绘那条坑没必要再踩一次（槽位常年留着，不会跳版）
+    pub fn set_save_dirty(&self, dirty: bool) {
+        self.save_dot.setHidden(!dirty);
     }
 
     /// 三角跟着开合换字形：CSS 用 rotate(90deg)，NSButton 的标题没有 transform
@@ -1249,13 +1264,9 @@ impl Panel {
     }
 
     /// 选中段填 accent，未选段退回轨道同色（等于看不见，只剩文字）
-    /// 轨道内容面的可用矩形：与轨道的可见边框重合（[`views::face`] 补掉 NSBox 缩进）
+    /// 轨道在行里占的那块矩形：滑块与标签与轨道同层，直接按它摆
     fn mode_face(&self) -> NSRect {
-        self.mode_track
-            .contentView()
-            .map_or(views::rect(0.0, 0.0, MODE_W, CTRL_H), |_| {
-                views::face(&self.mode_track)
-            })
+        self.mode_track.frame()
     }
 
     /// 选中那一段 = 滑块停在那儿。只有模式真的变了才动：启动时 sync_from_state
@@ -1370,9 +1381,6 @@ impl Panel {
         if !self.editor_ctx.isHidden() {
             for child in self.editor_ctx.subviews().to_vec() {
                 child.setFrameOrigin(NSPoint::new(0.0, y));
-                if let Some(card) = child.downcast_ref::<NSBox>() {
-                    refit_box(card);
-                }
                 y += child.frame().size.height + ROW_GAP;
             }
             self.editor_ctx
@@ -1382,11 +1390,17 @@ impl Panel {
             view.setFrameOrigin(NSPoint::new(0.0, y));
             y += view.frame().size.height + ROW_GAP;
         }
-        refit_box(&self.sites_box);
-        // #set-save { margin-left: auto }：贴右，读起来是一个动作，不是又一块草稿框
+        // #set-save { margin-left: auto }：贴右，读起来是一个动作，不是又一块草稿框。
+        // 脏点的槽常年留着（不出现时就是右边一段空白），所以它亮起来不会把按钮推走
         let save_w = self.set_save.fit_width(72.0);
         self.set_save
-            .set_frame(views::rect(BODY_W - save_w, y, save_w, CTRL_H));
+            .set_frame(views::rect(BODY_W - DOT - S1 - save_w, y, save_w, CTRL_H));
+        self.save_dot.setFrame(views::rect(
+            BODY_W - DOT,
+            y + (CTRL_H - DOT) / 2.0,
+            DOT,
+            DOT,
+        ));
         y + CTRL_H
     }
 }

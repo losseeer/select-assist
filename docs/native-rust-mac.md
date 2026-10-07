@@ -109,7 +109,10 @@ dirs = "6"                                                 # home dir
   - **UI 走查重做后我又量了一次，结论是「重设计不费内存」，先前那句「+7MB」是我自己的口径错了**：拿跑了很久、开过设置与会话列表的进程，去比 §M5 那个刚启动的数。同机同状态对照（`git archive` 出两份源码分别构建）：`51acf28`（重做前）35.2MB、`be41648`（重做后）33.5MB、本轮修改后 34.5MB —— 差异在噪声里。
   - **真正的内存大户是 `maskImage`，已换掉**：圆角原先靠给 `NSVisualEffectView` 挂一张与窗口等大的遮罩位图，`arrange` 每次改高度都要重画一张（入场动画 10 帧 = 10 张）。改成图层 `cornerRadius + masksToBounds` 后：**空闲 22MB，30 次展开/折叠后仍是 22.0MB 不涨**（原先 34.5 → 37.6，瞬时峰值见过 80MB）。圆角与尺寸无关，也就不存在「动画中途被拉成椭圆」的问题。§5 的 ≤20MB 目标现在只差 2MB。
 - **高度动画的驱动方式**：原先每帧重挂一个 one-shot `NSTimer`，入列开销 ~1.3ms 把帧距从 16.7ms 顶到 18.5ms，对不上 60Hz 的 vsync；而且一次切模式会连着调 `relayout` 三遍（`reload_sites` → `attach` → `refresh`），每遍各挂一条链，实测同一帧被驱动两次、`arrange` 开销翻倍。改成**整段动画只挂一条 repeating 计时器**（`relayout` 只改终点，不另起链），缓出按「已经走了多久」算而不是按第几帧算。实测：一拍一帧、帧距 17.4ms、单帧成本从 2.4ms 降到 ~0.6ms。
-- **NSBox 的内容缩进**：全代码库都拿 `host.bounds()` 给盒子内的子视图定位，而 NSBox 会把 `contentView` 往里缩约 5pt（`setContentInsets:` 在 objc2-app-kit 0.3 里没绑，直接 msg_send 会抛 ObjC 异常 —— Rust 侧接不住，进程当场 abort）。后果是**胶囊里居中的标题比盒子中心高 5.75pt**（「取入选区」顶在蓝底上半截）、模式轨道的滑块被压成 10pt 薄片。修法是 `views::face()` 把缩进补回来，并且在**每次摆放时重算**：盒子没排过布局时 `contentView` 的缩进还不是真值，只在构造时算会拿到没缩进的面（实测「复制 Prompt」那颗因此反过来偏低 5.75pt）。
+- **NSBox 的内容缩进**：全代码库都拿 `host.bounds()` 给盒子内的子视图定位，而 NSBox 会把 `contentView` 摆到 (6,6)、四边各缩掉 6pt（`setContentInsets:` 在 objc2-app-kit 0.3 里没绑，直接 msg_send 会抛 ObjC 异常 —— Rust 侧接不住，进程当场 abort）。后果是**胶囊里居中的标题比盒子中心高 5.75pt**（「取入选区」顶在蓝底上半截）、模式轨道的滑块被压成 10pt 薄片。修法是 `views::face()` 把缩进补回来，并且在**每次摆放时重算**：盒子没排过布局时 `contentView` 的缩进还不是真值，只在构造时算会拿到没缩进的面（实测「复制 Prompt」那颗因此反过来偏低 5.75pt）。
+  两处补充：① `views::face()` 要按 contentView 的**真实原点**算，不能假设四边对称地缩；② 模式轨道的滑块与两段标签最终**不放进盒子的 contentView**，改为与轨道同为「行」的子孙 —— NSBox 会在自己布局时挪 contentView，已经躺在里面的子视图跟着整体平移，实测整组比轨道中线高 5pt、右端顶出盒子（胶囊那边靠「每次摆放重算」就够了，因为它只有被子视图自己用的一个坐标面）。
+- **窗口投影关掉了**（Electron 那侧 `hasShadow: true`）：无边框窗口的投影按**矩形**内容轮廓算，四角外缘留下一圈没被投影盖到的亮直角。三条路都试过：图层 `cornerRadius` 只裁绘制、改不了投影形状；`NSWindow.setContentShape:` 在这台系统上直接抛 ObjC 异常（Rust 接不住，当场 abort）；退回从前的 `maskImage` 也没用 —— 拿 `git archive HEAD` 另建一份逐像素比对，四角同样有。关掉后靠 1px 发丝描边 + veil 仍然分得清层次。**要还原投影的话唯一正路是自绘**：容器层不裁、挂 `shadowRadius/shadowColor`，毛玻璃层单独裁圆角。
+- **脏点判定不许回写草稿**：`sync_dirty()` 一开始写成「先 `commit_template()` 把编辑框折回草稿再比」，而启动时 `sync_from_state` 跑在 `reload_prompt_editor` 之前，那一刻编辑框还是空的 —— 于是把草稿里真实的模板抹成空串，表现为**模板框整片空白**，点保存还会把用户的指令一起抹掉。现在改成只读：把编辑框当前文字代进一份本地草稿副本再比。附带一个与 Electron 的语义差：事件计数式脏标记「改回去也还是脏」，值比较式会回到干净。
 - **依赖**：§2 的清单外多了 `regex`（redact 的两条模式）与 `serde_json` 的 `preserve_order`（写回 settings.json 必须保持用户键序）。
 - **§2 的 feature 名**（`NSApplicationConstants`/`NSGeometry`/`NSWindowConstants`）在 objc2-app-kit 0.3 里不存在；几何类型来自 `objc2_foundation`。
 - **单实例保护**：§3 要求「原生版内部按 bundle id 查重」，M6 落地为 `main.rs::another_instance_is_running()`；裸二进制（无 bundle id）放行，沙箱并排调试不受影响。
@@ -129,7 +132,9 @@ dirs = "6"                                                 # home dir
 - **组装失败的原因只写一处**：只留会话行的「上下文：<原因>」，状态行不再抄一遍（原来是两行同义的橙色）。**移植点**：删掉 `renderer.js` 里 attach 失败那次 `flashStatus(err, true)`。
 - **提示收回**：非错误 4s、错误 3s，两者都会把状态行清空。Electron 的 `flashStatus` 只清非错误，错误文本会一直挂在 `#ctx-status` 上直到下一次写入。
 
-native **缺**、Electron 有的：`#set-save.dirty::after ●`（草稿与已存设置不一致时的脏点）；以及所有 hover 态（AppKit 侧没做 tracking area，只有按下态反馈）。
+- **保存按钮的脏点 ●**（CSS: `#set-save.dirty::after`）：native 已实现，槽位常年留着，亮起来不推按钮。判定方式与 Electron 不同 —— Electron 是 `#settings` 上的 `input` 事件一响就永久置脏，native 每次把「现在点保存会写出去的那份」按 `save_settings` 同样的取舍现算一遍再与已存值比，所以**改了又改回去会回到干净**。要同步的话得在 renderer 里做同样的比较，而不只是清 class。
+
+native **缺**、Electron 有的：所有 hover 态（AppKit 侧没做 tracking area，只有按下态反馈）。
 
 ### 合并回 main 的三条路
 
