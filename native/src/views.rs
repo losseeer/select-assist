@@ -6,16 +6,15 @@
 //! ② 间距收敛到 4pt 网格（8 组内 / 12 行间 / 16 边距 / 25 组间），不再是 6·8·12·16 混用。
 //! 每处与 CSS 不同的取值都在下面注明替换的是哪条。
 
-use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, Bool, Sel};
+use objc2::runtime::{AnyObject, Sel};
 use objc2::{define_class, msg_send, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::*;
 use objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 use objc2_quartz_core::{kCAMediaTimingFunctionEaseOut, CAMediaTimingFunction};
 
 /* ---------- 圆角 ---------- */
-/// 窗口：maskImage 与 veil 卡共用（CSS: border-radius 12）
+/// 窗口圆角：毛玻璃层的 cornerRadius 与 veil 卡共用（CSS: border-radius 12）
 pub const R_WINDOW: f64 = 12.0;
 /// 容器：输入框、会话浏览器（CSS 给 textarea 写的也是 6，但 6 在 8 的容器体系里偏挤，
 /// 提到 8 让它明确属于「容器」而不是「控件」这一档）
@@ -179,6 +178,27 @@ pub fn card(
     card
 }
 
+/// 盒子里给子视图用的坐标面。
+///
+/// NSBox 会把 contentView 往里缩（实测四边各约 5pt），而全代码库都拿 `host.bounds()`
+/// 给子视图定位 —— 缩进不补回来，子视图坐标系就整体下移：胶囊里居中的标题实测比盒子
+/// 中心高出 5.75pt（「取入选区」顶在蓝底上半截），模式轨道的段高只剩 14pt（滑块成薄片）。
+/// 返回的矩形与盒子的可见边框重合，且已经是 contentView 自己的坐标系（可负、可超出，
+/// NSBox 不裁子视图 —— 实测标题就画在缩进区上方）。
+pub fn face(host: &NSBox) -> NSRect {
+    let outer = host.frame().size;
+    host.contentView()
+        .map_or(rect(0.0, 0.0, outer.width, outer.height), |content| {
+            let inner = content.bounds().size;
+            rect(
+                (inner.width - outer.width) / 2.0,
+                (inner.height - outer.height) / 2.0,
+                outer.width,
+                outer.height,
+            )
+        })
+}
+
 /// 组间发丝：CSS 的 #ctx-group/#act-group/#settings { border-top: 1px solid --line }
 pub fn divider(mtm: MainThreadMarker, width: f64) -> Retained<NSBox> {
     card(
@@ -205,6 +225,12 @@ pub fn label(
 }
 
 /// vibrancy:'hud' + visualEffectState:'active'
+/// 窗口是透明的，方形毛玻璃会在四角露出来，所以要裁圆角。
+///
+/// 用图层的 cornerRadius + masksToBounds，不用 NSVisualEffectView 的 maskImage：后者是一张
+/// 与窗口等大的位图，高度动画里每帧都得重画（不重画圆角会被拉成椭圆），实测每帧多花约 1ms，
+/// 而且每帧新建一张 2.3MB 的图 —— 快速展开/折叠时把 phys_footprint 顶到 80MB。
+/// 图层圆角与尺寸无关，高度随便变。
 pub fn blur(mtm: MainThreadMarker, width: f64, height: f64) -> Retained<NSVisualEffectView> {
     let view = NSVisualEffectView::initWithFrame(
         NSVisualEffectView::alloc(mtm),
@@ -214,24 +240,12 @@ pub fn blur(mtm: MainThreadMarker, width: f64, height: f64) -> Retained<NSVisual
     view.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
     // 桌面/Finder 拿到焦点时也保持 active 态模糊，否则退化成扁平的 inactive 变体
     view.setState(NSVisualEffectState::Active);
+    view.setWantsLayer(true);
+    if let Some(layer) = view.layer() {
+        layer.setCornerRadius(R_WINDOW);
+        layer.setMasksToBounds(true);
+    }
     view
-}
-
-/// 窗口是透明的，方形毛玻璃会在四角露出来，所以只能靠 maskImage 变圆角。
-/// 高度变了必须重画，否则圆角会被拉成椭圆。
-/// （试过整窗复用一张、只 setSize：30 次展开/折叠的 footprint 曲线与每次重建完全重合，
-///  35/71/34 vs 35/72/34，所以不必为它多养一个字段。）
-pub fn set_mask(view: &NSVisualEffectView, width: f64, height: f64) {
-    let white = NSColor::whiteColor();
-    let mask = RcBlock::new(move |rect: NSRect| -> Bool {
-        NSRectFillUsingOperation(rect, NSCompositingOperation::Clear);
-        white.set();
-        NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, R_WINDOW, R_WINDOW).fill();
-        Bool::YES
-    });
-    let image =
-        NSImage::imageWithSize_flipped_drawingHandler(NSSize::new(width, height), false, &mask);
-    view.setMaskImage(Some(&image));
 }
 
 /// 未读点。必须 layer-backed：非 layer 视图把 alphaValue 从 0 调回 1 时 AppKit 不重绘（实测）。
@@ -296,7 +310,7 @@ impl Pill {
         button.setBordered(false);
         button.setTitle(&NSString::from_str(title));
         button.setFont(Some(&font(T_BODY)));
-        button.setFrame(host.bounds());
+        button.setFrame(face(&host));
         button.setAutoresizingMask(
             NSAutoresizingMaskOptions::ViewWidthSizable
                 | NSAutoresizingMaskOptions::ViewHeightSizable,
@@ -327,6 +341,10 @@ impl Pill {
 
     pub fn set_frame(&self, frame: NSRect) {
         self.host.setFrame(frame);
+        // 每次摆放都重算：NSBox 的 contentView 缩进要等盒子自己被布局之后才准，
+        // 只在构造时算一次会拿到「还没缩」的面 —— 实测「复制 Prompt」那颗因此比盒子低 5.75pt，
+        // 而头部「取入选区」正好（两者构造与摆放的时机不同）。
+        self.button.setFrame(face(&self.host));
     }
 
     pub fn set_title(&self, title: &str) {
@@ -419,6 +437,9 @@ pub fn disclosure(mtm: MainThreadMarker, title: &str, frame: NSRect) -> Retained
     button.setBordered(false);
     button.setTitle(&NSString::from_str(title));
     button.setFont(Some(&font(T_HEAD)));
+    // NSButtonCell 默认把标题居中：72pt 宽的行里「▸ 设置」会被推到中间，
+    // 左边比上面那行站点按钮缩进十几 pt，读起来像凭空多了一级缩进
+    button.setAlignment(NSTextAlignment::Left);
     let cell: Retained<NSButtonCell> = unsafe { msg_send![&button, cell] };
     cell.setHighlightsBy(NSCellStyleMask(HIGHLIGHT_BY_GRAY_POINT));
     button
@@ -473,7 +494,7 @@ fn configure(window: &NSPanel) {
     unsafe {
         window.setReleasedWhenClosed(false);
     }
-    // 圆角由 maskImage 与 NSBox 负责，所以窗口自身不画圆角、也不画背景
+    // 圆角由毛玻璃图层与 NSBox 负责，所以窗口自身不画圆角、也不画背景
     window.setOpaque(false);
     window.setBackgroundColor(Some(&NSColor::clearColor()));
     window.setHasShadow(true);

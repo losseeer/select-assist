@@ -106,7 +106,10 @@ dirs = "6"                                                 # home dir
 
 - **panel 窗口形态**：§3 写的「Titled 可 key」不成立 —— AppKit 在 order-front 时对 titled 窗口跑 `constrainFrameRect`，会把算好的锚点改掉（实测 x<221 一律被推到 221）。改为无边框 `NSPanel` 子类 + `canBecomeKeyWindow`，并在 `sendEvent:` 里复刻 renderer.js「mousedown 命中输入控件才 focusSelf」的语义。
 - **内存目标**：§5 的「≤20MB、冲 10MB」低于本机 AppKit 下限。§6 的 `ps rss` 口径还把共享框架页算进来（实测 76–113MB）。真实口径（`footprint` / phys_footprint）：**空闲 36MB、展开 37MB、最重 42MB**；同机参照 WallpaperAgent 18MB（无窗口）、Dock 57MB、ControlCenter 75MB。快速展开/折叠会瞬时到 71MB，但 20/30 次不再涨、静置 15s 回落到 34MB —— 是 WindowServer 的有界 backing-store 池，不是泄漏。
-  - **UI 走查重做后**（vibrancy 底 + 自绘轨道/胶囊 + 分节发丝），同一台机器重测：**空闲 43–44MB、展开 44MB、开设置并铺开会话列表时瞬时到 80MB。即这轮视觉改造的代价约 +7MB 稳态**，仍是有界池、不随次数增长。README 的口径已按新数改过。
+  - **UI 走查重做后我又量了一次，结论是「重设计不费内存」，先前那句「+7MB」是我自己的口径错了**：拿跑了很久、开过设置与会话列表的进程，去比 §M5 那个刚启动的数。同机同状态对照（`git archive` 出两份源码分别构建）：`51acf28`（重做前）35.2MB、`be41648`（重做后）33.5MB、本轮修改后 34.5MB —— 差异在噪声里。
+  - **真正的内存大户是 `maskImage`，已换掉**：圆角原先靠给 `NSVisualEffectView` 挂一张与窗口等大的遮罩位图，`arrange` 每次改高度都要重画一张（入场动画 10 帧 = 10 张）。改成图层 `cornerRadius + masksToBounds` 后：**空闲 22MB，30 次展开/折叠后仍是 22.0MB 不涨**（原先 34.5 → 37.6，瞬时峰值见过 80MB）。圆角与尺寸无关，也就不存在「动画中途被拉成椭圆」的问题。§5 的 ≤20MB 目标现在只差 2MB。
+- **高度动画的驱动方式**：原先每帧重挂一个 one-shot `NSTimer`，入列开销 ~1.3ms 把帧距从 16.7ms 顶到 18.5ms，对不上 60Hz 的 vsync；而且一次切模式会连着调 `relayout` 三遍（`reload_sites` → `attach` → `refresh`），每遍各挂一条链，实测同一帧被驱动两次、`arrange` 开销翻倍。改成**整段动画只挂一条 repeating 计时器**（`relayout` 只改终点，不另起链），缓出按「已经走了多久」算而不是按第几帧算。实测：一拍一帧、帧距 17.4ms、单帧成本从 2.4ms 降到 ~0.6ms。
+- **NSBox 的内容缩进**：全代码库都拿 `host.bounds()` 给盒子内的子视图定位，而 NSBox 会把 `contentView` 往里缩约 5pt（`setContentInsets:` 在 objc2-app-kit 0.3 里没绑，直接 msg_send 会抛 ObjC 异常 —— Rust 侧接不住，进程当场 abort）。后果是**胶囊里居中的标题比盒子中心高 5.75pt**（「取入选区」顶在蓝底上半截）、模式轨道的滑块被压成 10pt 薄片。修法是 `views::face()` 把缩进补回来，并且在**每次摆放时重算**：盒子没排过布局时 `contentView` 的缩进还不是真值，只在构造时算会拿到没缩进的面（实测「复制 Prompt」那颗因此反过来偏低 5.75pt）。
 - **依赖**：§2 的清单外多了 `regex`（redact 的两条模式）与 `serde_json` 的 `preserve_order`（写回 settings.json 必须保持用户键序）。
 - **§2 的 feature 名**（`NSApplicationConstants`/`NSGeometry`/`NSWindowConstants`）在 objc2-app-kit 0.3 里不存在；几何类型来自 `objc2_foundation`。
 - **单实例保护**：§3 要求「原生版内部按 bundle id 查重」，M6 落地为 `main.rs::another_instance_is_running()`；裸二进制（无 bundle id）放行，沙箱并排调试不受影响。

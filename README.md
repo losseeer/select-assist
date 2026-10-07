@@ -61,7 +61,7 @@ pnpm --filter @select-assist/panel dist   # （可选 ）打包本机安装包�
 
 - **共用同一份设置**：读写与 Electron 版同一个 `~/Library/Application Support/select-assist/settings.json`（窗口位置、站点组、提问指令、会话路径、脱敏开关都互通）。⚠️ 两版同时运行会互相覆盖这个文件，切换体验时先退掉另一个。bundle id 不同（`dev.select-assist.native`），所以可以并存；原生版自身有单实例保护。
 - **行为对齐**：chip 永不抢键盘焦点、选区直通逐字节原文、transcript 只收 user/assistant 纯文本且省略项明示；ctxpack 的 TS 用例是 Rust 单测的行为规格，输出逐字比对。
-- **代价**：release `.app` 4.5MB，空闲内存实测约 44MB（`footprint` 口径；Electron 版同用途在数百 MB 量级）。macOS 14+ / Apple Silicon。
+- **代价**：release `.app` 4.5MB，空闲内存实测约 22MB（`footprint` 口径；Electron 版同用途在数百 MB 量级）。macOS 14+ / Apple Silicon。
 
 ```bash
 cd native

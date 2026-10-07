@@ -36,7 +36,6 @@ impl Chip {
             NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel,
         );
         let blur = views::blur(mtm, WIDTH, HEIGHT);
-        views::set_mask(&blur, WIDTH, HEIGHT);
         window.setContentView(Some(&blur));
 
         blur.addSubview(&views::card(

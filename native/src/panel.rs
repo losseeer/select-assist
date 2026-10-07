@@ -211,6 +211,22 @@ fn both_sizable() -> objc2_app_kit::NSAutoresizingMaskOptions {
 }
 
 /// 子视图跟着盒子一起长：NSBox 的排版面是它的 contentView
+/// 让盒子里的内容按它自己的 contentView 重算一次尺寸。
+/// NSBox 的内容缩进要等盒子排过布局才是真值，只在构造时量会拿到「还没缩」的面 ——
+/// 胶囊那边改成每次摆放重算（见 views::Pill::set_frame），输入框只在创建时算过一次，
+/// 所以在编辑器排完版之后统一补一次。
+fn refit_box(host: &NSBox) {
+    let Some(content) = host.contentView() else {
+        return;
+    };
+    let bounds = content.bounds();
+    for inner in content.subviews().iter() {
+        if let Some(view) = inner.downcast_ref::<NSView>() {
+            view.setFrame(bounds);
+        }
+    }
+}
+
 fn host_box_add(host: &NSBox, view: &NSView) {
     view.setAutoresizingMask(both_sizable());
     match host.contentView() {
@@ -236,7 +252,7 @@ fn text_field(
     );
     views::set_tip(&host, tip);
     let scroll = NSScrollView::new(mtm);
-    scroll.setFrame(host.bounds());
+    scroll.setFrame(views::face(&host));
     scroll.setBorderType(NSBorderType::NoBorder);
     scroll.setHasVerticalScroller(true);
     scroll.setAutohidesScrollers(true);
@@ -336,7 +352,6 @@ impl Panel {
         );
 
         let blur = views::blur(mtm, WIDTH, height);
-        views::set_mask(&blur, WIDTH, height);
         window.setContentView(Some(&blur));
         let card = views::card(
             mtm,
@@ -1182,7 +1197,6 @@ impl Panel {
         self.scroll
             .setFrame(views::rect(PAD_X, PAD_BOTTOM, BODY_W, body));
         self.layout_rows();
-        views::set_mask(&self.blur, WIDTH, height);
         let origin = geometry.cocoa_origin(anchor.0, anchor.1, height);
         self.window
             .setFrame_display(views::rect(origin.x, origin.y, WIDTH, height), true);
@@ -1197,7 +1211,6 @@ impl Panel {
     }
 
     /// 动画帧：把正文高度摆到 `body`（不做内容自适应），行列位置照常重排。
-    /// 每帧都重画 maskImage —— 圆角不跟着高度走会被拉成椭圆（不变量 4）。
     pub fn arrange_body(&self, geometry: &Geometry, anchor: (f64, f64), body: f64) {
         self.layout_rows();
         self.arrange(geometry, anchor, body);
@@ -1236,11 +1249,13 @@ impl Panel {
     }
 
     /// 选中段填 accent，未选段退回轨道同色（等于看不见，只剩文字）
-    /// 轨道内容面的 bounds：NSBox 会把内容往里缩（实测约 5pt），一切按它自己的面算
+    /// 轨道内容面的可用矩形：与轨道的可见边框重合（[`views::face`] 补掉 NSBox 缩进）
     fn mode_face(&self) -> NSRect {
         self.mode_track
             .contentView()
-            .map_or(views::rect(0.0, 0.0, MODE_W, CTRL_H), |v| v.bounds())
+            .map_or(views::rect(0.0, 0.0, MODE_W, CTRL_H), |_| {
+                views::face(&self.mode_track)
+            })
     }
 
     /// 选中那一段 = 滑块停在那儿。只有模式真的变了才动：启动时 sync_from_state
@@ -1355,6 +1370,9 @@ impl Panel {
         if !self.editor_ctx.isHidden() {
             for child in self.editor_ctx.subviews().to_vec() {
                 child.setFrameOrigin(NSPoint::new(0.0, y));
+                if let Some(card) = child.downcast_ref::<NSBox>() {
+                    refit_box(card);
+                }
                 y += child.frame().size.height + ROW_GAP;
             }
             self.editor_ctx
@@ -1364,6 +1382,7 @@ impl Panel {
             view.setFrameOrigin(NSPoint::new(0.0, y));
             y += view.frame().size.height + ROW_GAP;
         }
+        refit_box(&self.sites_box);
         // #set-save { margin-left: auto }：贴右，读起来是一个动作，不是又一块草稿框
         let save_w = self.set_save.fit_width(72.0);
         self.set_save

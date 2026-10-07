@@ -4,6 +4,7 @@
 
 use std::cell::RefCell;
 use std::ptr::NonNull;
+use std::time::Instant;
 
 use block2::RcBlock;
 use objc2::rc::{Retained, Weak};
@@ -45,20 +46,21 @@ const AGENT_TOKENS: [&str; 6] = [
 enum After {
     ClearFlash,
     ResetCopyLabel,
-    /// 面板长高 / 变矮的一帧（见 relayout）
-    AnimFrame(u32),
 }
 
-/// 高度过渡的帧数与间隔：约 10 × 16ms ≈ 166ms，落在 motion-plan 的
+/// 高度过渡的节拍与总时长：60Hz × ~167ms，落在 motion-plan 的
 /// 「面板级状态变化 200ms 上下」这一档
-const ANIM_FRAMES: u32 = 10;
 const ANIM_TICK: f64 = 1.0 / 60.0;
+const ANIM_SECONDS: f64 = 10.0 * ANIM_TICK;
 
-/// 一次高度过渡的两端（正文高度，单位 pt）
+/// 一次高度过渡的两端（正文高度，单位 pt）与起点时刻。
+/// 位置按「已经走了多久」算，不按第几帧算：计时器一定不准，
+/// 按帧号走会让动画被拉慢或抽稀，按时间走则只是采样点变了、曲线不变。
 #[derive(Clone, Copy)]
 struct Anim {
     from: f64,
     to: f64,
+    started: Instant,
 }
 
 struct State {
@@ -89,6 +91,8 @@ pub struct Ivars {
     state: RefCell<State>,
     /// 正在进行的高度过渡（None = 没在动）
     anim: RefCell<Option<Anim>>,
+    /// 驱动它的那一条 repeating 计时器（整段动画只挂一次）
+    anim_timer: RefCell<Option<Retained<NSTimer>>>,
     weak: RefCell<Option<Weak<Controller>>>,
 }
 
@@ -285,6 +289,7 @@ impl Controller {
             }),
             weak: RefCell::new(None),
             anim: RefCell::new(None),
+            anim_timer: RefCell::new(None),
         });
         unsafe { msg_send![super(this), init] }
     }
@@ -476,33 +481,67 @@ impl Controller {
             ivars.panel.arrange_to_content(&ivars.geometry, anchor);
             return;
         }
-        *ivars.anim.borrow_mut() = Some(Anim { from, to });
+        // 已经在动就只改终点（下一拍自然折向新目标），不再另挂一条链：
+        // 一次切模式会连着调 relayout 三遍（reload_sites → attach → refresh），
+        // 每遍都挂链的话同一帧被驱动两次，实测 arrange 开销直接翻倍。
+        *ivars.anim.borrow_mut() = Some(Anim {
+            from,
+            to,
+            started: Instant::now(),
+        });
         ivars.panel.set_animating(true);
-        self.anim_frame(0);
+        if ivars.anim_timer.borrow().is_none() {
+            self.start_anim_timer();
+        }
     }
 
-    /// 一帧：三次缓出（decelerate，和入场同一条签名曲线），最后一帧落到真实内容高度
-    fn anim_frame(&self, index: u32) {
+    /// 一条 repeating 计时器跑完整段动画。
+    /// 以前每帧重挂一个 one-shot，入列本身的 ~1.3ms 让帧距从 16.7ms 漂到 18ms
+    /// （实测），对不上 60Hz 的 vsync —— 慢速位移看着就发黏。
+    fn start_anim_timer(&self) {
+        let Some(weak) = self.ivars().weak.borrow().clone() else {
+            return;
+        };
+        let block = RcBlock::new(move |_timer: NonNull<NSTimer>| {
+            if let Some(controller) = weak.load() {
+                controller.anim_tick();
+            }
+        });
+        let timer = unsafe {
+            NSTimer::scheduledTimerWithTimeInterval_repeats_block(ANIM_TICK, true, &block)
+        };
+        *self.ivars().anim_timer.borrow_mut() = Some(timer);
+    }
+
+    fn stop_anim(&self) {
+        let ivars = self.ivars();
+        if let Some(timer) = ivars.anim_timer.borrow_mut().take() {
+            timer.invalidate();
+        }
+        *ivars.anim.borrow_mut() = None;
+        ivars.panel.set_animating(false);
+    }
+
+    /// 一拍：按已走的时间算缓出（decelerate，和入场同一条签名曲线），收拍落到真实内容高度
+    fn anim_tick(&self) {
         let ivars = self.ivars();
         let Some(anim) = *ivars.anim.borrow() else {
-            return; // 已被新的一次 relayout 取代
+            self.stop_anim();
+            return;
         };
-        let last = index + 1 >= ANIM_FRAMES;
-        let progress = (index as f64 + 1.0) / ANIM_FRAMES as f64;
-        let eased = 1.0 - (1.0 - progress).powi(3);
-        let body = anim.from + (anim.to - anim.from) * eased;
-        if last {
-            *ivars.anim.borrow_mut() = None;
-            ivars.panel.set_animating(false);
+        let progress = anim.started.elapsed().as_secs_f64() / ANIM_SECONDS;
+        if progress >= 1.0 {
+            self.stop_anim();
             ivars
                 .panel
                 .arrange_to_content(&ivars.geometry, self.anchor());
-        } else {
-            ivars
-                .panel
-                .arrange_body(&ivars.geometry, self.anchor(), body);
-            self.after(ANIM_TICK, After::AnimFrame(index + 1));
+            return;
         }
+        let eased = 1.0 - (1.0 - progress).powi(3);
+        let body = anim.from + (anim.to - anim.from) * eased;
+        ivars
+            .panel
+            .arrange_body(&ivars.geometry, self.anchor(), body);
     }
 
     // ---------- 动作 ----------
@@ -893,7 +932,6 @@ impl Controller {
                 panel.set_copy_title(if read { COPY_READ } else { COPY_DIRECT });
                 panel.set_copy_done(false);
             }
-            After::AnimFrame(index) => self.anim_frame(index),
         }
     }
 
