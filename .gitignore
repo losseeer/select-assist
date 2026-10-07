@@ -4,3 +4,5 @@ dist-cjs/
 release/
 *.log
 .DS_Store
+native/target/
+native/dist/
