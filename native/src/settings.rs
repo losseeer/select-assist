@@ -5,10 +5,18 @@ use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::PathBuf;
 
+use serde::Deserialize;
 use serde_json::{Map, Value};
 
 pub const WINDOW_X: &str = "windowX";
 pub const WINDOW_Y: &str = "windowY";
+
+/// 站点按钮，字段名与 Electron 的 SiteTarget 一致
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct SiteTarget {
+    pub name: String,
+    pub url: String,
+}
 
 #[derive(Clone, Debug)]
 pub struct Settings {
@@ -51,6 +59,18 @@ impl Settings {
     pub fn position(&self) -> Option<(f64, f64)> {
         let map = self.read().ok()?;
         Some((map.get(WINDOW_X)?.as_f64()?, map.get(WINDOW_Y)?.as_f64()?))
+    }
+
+    /// 直通模式的目标站。没配就是空列表——原生版不另存一份默认值，
+    /// 默认站点属于 Electron 那边的 SettingsStore，两版共用同一个文件。
+    pub fn direct_sites(&self) -> Vec<SiteTarget> {
+        let Ok(map) = self.read() else {
+            return Vec::new();
+        };
+        match map.get("directSites") {
+            Some(value) => serde_json::from_value(value.clone()).unwrap_or_default(),
+            None => Vec::new(),
+        }
     }
 
     pub fn patch_position(&self, x: f64, y: f64) -> io::Result<()> {
@@ -116,6 +136,29 @@ mod tests {
         assert!(settings.patch_position(1.0, 2.0).is_err());
         assert_eq!(fs::read_to_string(&file).unwrap(), "{ not json");
         assert_eq!(settings.position(), None);
+        fs::remove_file(&file).ok();
+    }
+
+    #[test]
+    fn reads_direct_sites_and_tolerates_garbage() {
+        let file = temp_name("sites");
+        let settings = Settings::at(file.clone());
+        fs::write(
+            &file,
+            r#"{"directSites":[{"name":"Google","url":"https://www.google.com/"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            settings.direct_sites(),
+            vec![SiteTarget {
+                name: "Google".into(),
+                url: "https://www.google.com/".into()
+            }]
+        );
+
+        // 条目缺字段 → 整组退回空，而不是把半个站点摆到界面上
+        fs::write(&file, r#"{"directSites":[{"name":"缺 url"}]}"#).unwrap();
+        assert_eq!(settings.direct_sites(), Vec::new());
         fs::remove_file(&file).ok();
     }
 

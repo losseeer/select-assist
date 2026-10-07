@@ -1,7 +1,9 @@
 mod app;
+mod capture;
 mod chip;
 mod geo;
 mod panel;
+mod pasteboard;
 mod settings;
 mod views;
 
@@ -20,10 +22,11 @@ fn main() {
     let settings = settings::Settings::shared();
     let anchor = start_anchor(&geometry, settings.position());
 
+    let sites = settings.direct_sites();
     let chip = chip::Chip::create(mtm, &geometry, anchor);
-    let panel = panel::Panel::create(mtm, &geometry, anchor);
-    let controller = app::Controller::new(mtm, geometry, settings, chip, panel);
-    controller.start();
+    let panel = panel::Panel::create(mtm, &geometry, anchor, &sites);
+    let controller = app::Controller::new(mtm, geometry, settings, chip, panel, sites);
+    app::Controller::start(&controller);
     app.run();
 }
 

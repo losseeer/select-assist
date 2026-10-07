@@ -3,7 +3,7 @@
 
 use objc2::rc::Retained;
 use objc2::MainThreadMarker;
-use objc2_app_kit::{NSButton, NSColor, NSPanel, NSWindowStyleMask};
+use objc2_app_kit::{NSBox, NSButton, NSColor, NSPanel, NSTextField, NSWindowStyleMask};
 
 use crate::geo::Geometry;
 use crate::views::{self, BADGE, BUTTON_H, BUTTON_W, GAP, ICON, PAD_X, RADIUS, TEXT_H};
@@ -16,8 +16,11 @@ pub const MARGIN_TOP: f64 = 60.0;
 
 pub struct Chip {
     pub window: Retained<NSPanel>,
-    /// ▸ 是展开键（chip 其余控件在 M1 还是静态的，不必留引用）
     pub dot: Retained<NSButton>,
+    pub status: Retained<NSTextField>,
+    /// 未读小红点：固定 8×8 占位，亮灭都不动布局
+    pub badge: Retained<NSBox>,
+    pub capture: Retained<NSButton>,
 }
 
 impl Chip {
@@ -57,7 +60,7 @@ impl Chip {
         let status_x = PAD_X + ICON + GAP;
         let status = views::label(
             mtm,
-            "还没有选区",
+            crate::capture::NO_SELECTION,
             12.0,
             &NSColor::secondaryLabelColor(),
             views::rect(
@@ -69,15 +72,15 @@ impl Chip {
         );
         blur.addSubview(&status);
 
-        // 固定占位的小红点：亮灭都不动布局（剪贴板轮询在 M2）
+        // 固定占位的小红点：亮灭都不动布局
         let badge = views::card(
             mtm,
             views::rect(badge_x, (HEIGHT - BADGE) / 2.0, BADGE, BADGE),
             BADGE / 2.0,
-            &NSColor::systemBlueColor(),
+            &views::rgba(10.0, 132.0, 255.0, 1.0),
             None,
         );
-        badge.setAlphaValue(0.0);
+        views::set_dot(&badge, false);
         blur.addSubview(&badge);
 
         let capture = views::push_button(
@@ -87,10 +90,17 @@ impl Chip {
             None,
             None,
         );
+        views::set_title(&capture, "取入选区", Some("把刚才复制的内容取进来"));
         blur.addSubview(&capture);
 
         // showInactive()：出现但不激活应用
         window.orderFrontRegardless();
-        Self { window, dot }
+        Self {
+            window,
+            dot,
+            status,
+            badge,
+            capture,
+        }
     }
 }

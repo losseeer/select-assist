@@ -37,7 +37,18 @@ objc2-app-kit = { version = "0.3", features = [
     "NSWindow",
     "NSWorkspace",
 ] }
-objc2-foundation = { version = "0.3", features = ["std", "NSArray"] }
+objc2-foundation = { version = "0.3", features = [
+    "std",
+    "NSArray",
+    "block2",
+    "NSDate",
+    "NSDateFormatter",
+    "NSNotification",
+    "NSFormatter",
+    "NSRunLoop",
+    "NSTimer",
+    "NSURL",
+] }
 serde = { version = "1", features = ["derive"] }
 # 写回共用文件时保持用户的键序
 serde_json = { version = "1", features = ["preserve_order"] }

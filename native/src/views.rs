@@ -116,6 +116,39 @@ pub fn push_button(
     button
 }
 
+/// #sites button：填充式中性的，不像 primary 那样抢强调色
+pub fn text_button(mtm: MainThreadMarker, title: &str, frame: NSRect) -> Retained<NSButton> {
+    let button = NSButton::new(mtm);
+    button.setFrame(frame);
+    button.setBezelStyle(NSBezelStyle::Push);
+    button.setTitle(&NSString::from_str(title));
+    button.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+    button
+}
+
+/// 未读点。必须 layer-backed：非 layer 视图把 alphaValue 从 0 调回 1 时 AppKit 不重绘（实测）。
+pub fn set_dot(dot: &NSBox, on: bool) {
+    dot.setWantsLayer(true);
+    dot.setAlphaValue(if on { 1.0 } else { 0.0 });
+}
+
+/// 状态行：文案 + tooltip（data-tip 的等价物）+ 出错时换成 --warn
+pub fn set_status(field: &NSTextField, text: &str, tip: &str, error: bool) {
+    field.setStringValue(&NSString::from_str(text));
+    field.setToolTip(Some(&NSString::from_str(tip)));
+    let tint = if error {
+        rgba(229.0, 161.0, 60.0, 1.0)
+    } else {
+        NSColor::secondaryLabelColor()
+    };
+    field.setTextColor(Some(&tint));
+}
+
+pub fn set_title(button: &NSButton, title: &str, tip: Option<&str>) {
+    button.setTitle(&NSString::from_str(title));
+    button.setToolTip(tip.map(NSString::from_str).as_deref());
+}
+
 /// .icon-btn：无边框的窗口动作键（▸ / ▾ / ✕）
 pub fn glyph_button(
     mtm: MainThreadMarker,

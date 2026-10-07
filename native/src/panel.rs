@@ -1,5 +1,6 @@
 //! panel 窗口：展开态。对应 Electron 的 panelWin（focusable:true，show/hide 而非 resize），
 //! 用 Titled + FullSizeContentView 才能成为 key window，NonactivatingPanel 保证显示它时不激活应用。
+//! 高度不写死：头部行 + body 里的内容行算出来，M2 的「复制选区原文 / 站点 / 字数」就是头两行。
 
 use objc2::rc::Retained;
 use objc2::MainThreadMarker;
@@ -7,17 +8,20 @@ use objc2_app_kit::{
     NSBox, NSButton, NSColor, NSPanel, NSTextField, NSView, NSVisualEffectView, NSWindowStyleMask,
     NSWindowTitleVisibility,
 };
-use objc2_foundation::NSPoint;
+use objc2_foundation::{NSPoint, NSString};
 
 use crate::geo::Geometry;
+use crate::settings::SiteTarget;
 use crate::views::{
-    self, BUTTON_H, BUTTON_W, HEAD_H, ICON, PAD_BOTTOM, PAD_TOP, PAD_X, RADIUS, ROW_GAP, TEXT_H,
+    self, BADGE, BUTTON_H, BUTTON_W, GAP, HEAD_H, ICON, PAD_BOTTOM, PAD_TOP, PAD_X, RADIUS,
+    ROW_GAP, TEXT_H,
 };
 
 pub const WIDTH: f64 = 400.0;
+/// #actions / #sites 的 flex gap 是 6px（比标题行的 8px 紧一档）
+const INNER_GAP: f64 = 6.0;
 
-/// 面板高度 = 上内边距 + 头部行 + Σ(间距 + 内容行) + 下内边距。
-/// M4 往 body 里加行，这里就自动长，不需要第二个尺寸常量。
+/// 面板高度 = 上内边距 + 头部行 + Σ(间距 + 内容行) + 下内边距
 fn height_of(rows: &[f64]) -> f64 {
     PAD_TOP + HEAD_H + rows.iter().map(|row| ROW_GAP + row).sum::<f64>() + PAD_BOTTOM
 }
@@ -35,13 +39,31 @@ pub struct Panel {
     pub status: Retained<NSTextField>,
     pub capture: Retained<NSButton>,
     pub quit: Retained<NSButton>,
+    /// 取入选区按钮右上角的未读点（#head-capture.newclip::after）
+    pub unread: Retained<NSBox>,
     body: Retained<NSView>,
+    pub copy: Retained<NSButton>,
+    pub meta: Retained<NSTextField>,
+    pub sites: Vec<Retained<NSButton>>,
+}
+
+/// 让按钮按文案自适应，但行高固定，避免换标签时整行跳动
+fn fitted(button: &NSButton, x: f64, y: f64) -> f64 {
+    button.sizeToFit();
+    let width = button.frame().size.width.max(BUTTON_W);
+    button.setFrame(views::rect(x, y, width, BUTTON_H));
+    width
 }
 
 impl Panel {
     /// 初始高度就是内容算出来的高度；anchor 是窗口左上角的全局坐标
-    pub fn create(mtm: MainThreadMarker, geometry: &Geometry, anchor: (f64, f64)) -> Self {
-        let height = height_of(&[]);
+    pub fn create(
+        mtm: MainThreadMarker,
+        geometry: &Geometry,
+        anchor: (f64, f64),
+        sites: &[SiteTarget],
+    ) -> Self {
+        let height = height_of(&[BUTTON_H, TEXT_H]);
         let window = views::panel(
             mtm,
             WIDTH,
@@ -79,7 +101,7 @@ impl Panel {
 
         let status = views::label(
             mtm,
-            "还没有选区",
+            crate::capture::NO_SELECTION,
             12.0,
             &NSColor::secondaryLabelColor(),
             views::rect(0.0, 0.0, 1.0, TEXT_H),
@@ -104,8 +126,53 @@ impl Panel {
         );
         blur.addSubview(&quit);
 
+        let unread = views::card(
+            mtm,
+            views::rect(0.0, 0.0, BADGE, BADGE),
+            BADGE / 2.0,
+            &views::rgba(10.0, 132.0, 255.0, 1.0),
+            None,
+        );
+        views::set_dot(&unread, false);
+        blur.addSubview(&unread);
+
+        // ---- body 的两行：#actions（复制 + 站点）与 #pack-meta（字数） ----
         let body = NSView::new(mtm);
         blur.addSubview(&body);
+
+        let actions = NSView::new(mtm);
+        // 行高要显式给：stack_rows 按子视图高度累加，0 高的容器会让按钮顶到头部行上
+        actions.setFrame(views::rect(0.0, 0.0, WIDTH - 2.0 * PAD_X, BUTTON_H));
+        body.addSubview(&actions);
+
+        let copy = views::push_button(
+            mtm,
+            "复制选区原文",
+            views::rect(0.0, 0.0, BUTTON_W, BUTTON_H),
+            None,
+            None,
+        );
+        actions.addSubview(&copy);
+        let mut cursor = fitted(&copy, 0.0, 0.0);
+
+        let mut site_buttons = Vec::with_capacity(sites.len());
+        for (index, site) in sites.iter().enumerate() {
+            let button = views::text_button(mtm, &site.name, views::rect(0.0, 0.0, 8.0, BUTTON_H));
+            button.setToolTip(Some(&NSString::from_str(&site.url)));
+            button.setTag(index as isize);
+            actions.addSubview(&button);
+            cursor += fitted(&button, cursor, 0.0) + INNER_GAP;
+            site_buttons.push(button);
+        }
+
+        let meta = views::label(
+            mtm,
+            "",
+            12.0,
+            &NSColor::secondaryLabelColor(),
+            views::rect(0.0, 0.0, WIDTH - 2.0 * PAD_X, TEXT_H),
+        );
+        body.addSubview(&meta);
 
         let panel = Self {
             window,
@@ -115,7 +182,11 @@ impl Panel {
             status,
             capture,
             quit,
+            unread,
             body,
+            copy,
+            meta,
+            sites: site_buttons,
         };
         panel.arrange(height);
         panel
@@ -125,28 +196,31 @@ impl Panel {
         height_of(&self.row_heights())
     }
 
-    /// #panel-head：▾ / 状态 / 取入选区 / ✕，整行贴顶
+    /// 高度变了要重排：头部行贴顶、body 撑满剩下的空间、圆角遮罩按新尺寸重画
     pub fn arrange(&self, height: f64) {
         let head_bottom = height - PAD_TOP - HEAD_H;
-        let center = head_bottom + (HEAD_H - ICON) / 2.0;
+        let icon_y = head_bottom + (HEAD_H - ICON) / 2.0;
         self.card.setFrame(views::rect(0.0, 0.0, WIDTH, height));
 
         self.collapse
-            .setFrame(views::rect(PAD_X, center, ICON, ICON));
+            .setFrame(views::rect(PAD_X, icon_y, ICON, ICON));
         self.quit
-            .setFrame(views::rect(WIDTH - PAD_X - ICON, center, ICON, ICON));
-        self.capture.setFrame(views::rect(
-            WIDTH - PAD_X - ICON - views::GAP - BUTTON_W,
-            head_bottom,
-            BUTTON_W,
-            BUTTON_H,
+            .setFrame(views::rect(WIDTH - PAD_X - ICON, icon_y, ICON, ICON));
+        let capture_x = WIDTH - PAD_X - ICON - GAP - BUTTON_W;
+        self.capture
+            .setFrame(views::rect(capture_x, head_bottom, BUTTON_W, BUTTON_H));
+        // top:-3 / right:-3
+        self.unread.setFrame(views::rect(
+            capture_x + BUTTON_W - BADGE + 3.0,
+            head_bottom + BUTTON_H - BADGE + 3.0,
+            BADGE,
+            BADGE,
         ));
-        let status_x = PAD_X + ICON + views::GAP;
-        let status_right = WIDTH - PAD_X - ICON - views::GAP - BUTTON_W - views::GAP;
+        let status_x = PAD_X + ICON + GAP;
         self.status.setFrame(views::rect(
             status_x,
             head_bottom + (HEAD_H - TEXT_H) / 2.0,
-            status_right - status_x,
+            capture_x - GAP - status_x,
             TEXT_H,
         ));
 
@@ -198,5 +272,12 @@ mod tests {
         assert_eq!(body_of(&[24.0]), 24.0);
         assert_eq!(height_of(&[24.0, 40.0]), 132.0);
         assert_eq!(body_of(&[24.0, 40.0]), 76.0);
+    }
+
+    /// M2 的头两行：动作行 24 + 字数行 16
+    #[test]
+    fn m2_panel_measures_its_two_body_rows() {
+        assert_eq!(height_of(&[BUTTON_H, TEXT_H]), 108.0);
+        assert_eq!(body_of(&[BUTTON_H, TEXT_H]), 52.0);
     }
 }
