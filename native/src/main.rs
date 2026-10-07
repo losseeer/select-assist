@@ -1,6 +1,9 @@
 mod app;
 mod capture;
+// M4 接上会话解读 UI 之前，ctxpack 只被自己的测试用到
 mod chip;
+#[allow(dead_code, unused_imports)]
+mod ctxpack;
 mod geo;
 mod panel;
 mod pasteboard;

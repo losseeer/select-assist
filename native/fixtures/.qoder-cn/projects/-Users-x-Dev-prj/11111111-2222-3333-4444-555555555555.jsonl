@@ -1,0 +1,7 @@
+{"type":"workspace-directories","sessionId":"11111111-2222-3333-4444-555555555555"}
+{"type":"user","cwd":"__HOME__/Dev/prj","sessionId":"11111111-2222-3333-4444-555555555555","isSidechain":false,"message":{"content":[{"type":"text","text":"<system-reminder>ENV MUST NOT APPEAR</system-reminder>这个悬浮窗怎么不抢焦点？"}]}}
+{"type":"assistant","cwd":"__HOME__/Dev/prj","sessionId":"11111111-2222-3333-4444-555555555555","message":{"content":[{"type":"thinking","text":"PRIVATE MUST NOT APPEAR"}]}}
+{"type":"assistant","cwd":"__HOME__/Dev/prj","sessionId":"11111111-2222-3333-4444-555555555555","message":{"content":[{"type":"tool_use","name":"read_file"}]}}
+{"type":"assistant","cwd":"__HOME__/Dev/prj","sessionId":"11111111-2222-3333-4444-555555555555","message":{"content":[{"type":"text","text":"把 chip 窗设为 focusable:false 就常驻不抢焦点。"}]}}
+{"type":"active-leaf","sessionId":"11111111-2222-3333-4444-555555555555"}
+{"type":"system","text":"MUST NOT APPEAR"}
