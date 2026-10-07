@@ -3,13 +3,17 @@
 //! 对照 static/index.html 的 #panel 结构与 renderer.js 的 applyMode()。
 
 use std::cell::{Cell, RefCell};
+use std::ptr::NonNull;
+use std::rc::Rc;
 
+use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::{MainThreadMarker, MainThreadOnly};
+use objc2::runtime::AnyObject;
+use objc2::{msg_send, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSBorderType, NSBox, NSButton, NSColor, NSControlStateValueOff, NSControlStateValueOn, NSFont,
-    NSPanel, NSPopUpButton, NSScrollView, NSSegmentStyle, NSSegmentedControl, NSSwitch,
-    NSTextField, NSTextView, NSView, NSVisualEffectView,
+    NSAnimationContext, NSBorderType, NSBox, NSButton, NSColor, NSControlStateValueOff,
+    NSControlStateValueOn, NSFont, NSPanel, NSPopUpButton, NSScrollView, NSSegmentStyle,
+    NSSegmentedControl, NSSwitch, NSTextField, NSTextView, NSView, NSVisualEffectView, NSWorkspace,
 };
 use objc2_foundation::{NSArray, NSPoint, NSSize, NSString};
 
@@ -33,6 +37,9 @@ const FIELD: f64 = 66.0;
 const INNER: f64 = 6.0;
 const BROWSER_LINE: f64 = 34.0;
 const BROWSER_MAX: f64 = 168.0;
+/// @keyframes enter：180ms 淡入 + 上浮 4px（style.css #panel.enter）
+const ENTER_MS: f64 = 0.18;
+const ENTER_RISE: f64 = 4.0;
 const BODY_W: f64 = WIDTH - 2.0 * PAD_X;
 
 /// 正文里的行。`on` 是 CSS 的 display:none（不占位）；模式内的控件用 setHidden（占位不画），
@@ -101,6 +108,9 @@ pub struct Panel {
     pub set_save: Retained<NSButton>,
     sites_scroll: Retained<NSScrollView>,
     sites: RefCell<Vec<Retained<NSButton>>>,
+    /// 入场动画进行中：这几帧内的 windowDidMove 不算用户挪窗口。
+    /// Rc 是因为完成回调要在动画结束后把它落回 false
+    entering: Rc<Cell<bool>>,
 }
 
 /// 正文高度 = 可见行高之和 + 行间距（Electron 那边量 body.scrollHeight 的等价物）
@@ -497,6 +507,7 @@ impl Panel {
             set_save,
             sites_scroll,
             sites: RefCell::new(Vec::new()),
+            entering: Rc::new(Cell::new(false)),
         };
         panel.reload_sites(mtm, sites);
         panel.reload_prompts(prompts, active_prompt);
@@ -764,6 +775,46 @@ impl Panel {
     /// 阻塞主线程做重活之前先把它画出来，否则用户看不到「正在填充上下文…」
     pub fn redraw(&self) {
         self.blur.display();
+    }
+
+    /// 展开时重放 #panel.enter：淡入 + 从下方 4px 抬起来。
+    /// 系统开了「减弱动态效果」就直接给不透明+就位，和 CSS 的 media query 一样。
+    pub fn play_enter(&self) {
+        let target = self.window.frame();
+        if NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion() {
+            self.window.setAlphaValue(1.0);
+            return;
+        }
+        // 入场那 4px 的偏移是动画起点，不是窗口位置：期间必须挡住 persist，
+        // 否则 setFrame 触发的 windowDidMove 会把偏掉的坐标写进 settings.json
+        self.entering.set(true);
+        self.window.setAlphaValue(0.0);
+        self.window.setFrame_display(
+            views::rect(
+                target.origin.x,
+                target.origin.y - ENTER_RISE,
+                target.size.width,
+                target.size.height,
+            ),
+            false,
+        );
+        let window = self.window.clone();
+        let changes = RcBlock::new(move |ctx: NonNull<NSAnimationContext>| unsafe {
+            // style.css 的 --ease 是 cubic-bezier(.25,.1,.25,1)，即默认 ease-in-out，
+            // NSAnimationContext 不设 timingFunction 时用的就是这条，所以不用引 CoreAnimation
+            ctx.as_ref().setDuration(ENTER_MS);
+            let animator: Retained<AnyObject> = msg_send![&window, animator];
+            let _: () = msg_send![&animator, setAlphaValue: 1.0];
+            let _: () = msg_send![&animator, setFrame: target, display: true];
+        });
+        let done = self.entering.clone();
+        let finished = RcBlock::new(move || done.set(false));
+        NSAnimationContext::runAnimationGroup_completionHandler(&changes, Some(&finished));
+    }
+
+    /// 入场动画期间（≈180ms）不要持久化窗口坐标
+    pub fn is_entering(&self) -> bool {
+        self.entering.get()
     }
 
     pub fn content_height(&self) -> f64 {

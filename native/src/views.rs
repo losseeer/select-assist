@@ -23,6 +23,8 @@ pub const BUTTON_W: f64 = 74.0;
 pub const BUTTON_H: f64 = 24.0;
 pub const LINE_H: f64 = 16.0;
 pub const BADGE: f64 = 8.0;
+/// NSCell.h: `NSCellHighlightByGrayPoint = 1 << 0`
+const HIGHLIGHT_BY_GRAY_POINT: usize = 1 << 0;
 
 pub fn rect(x: f64, y: f64, w: f64, h: f64) -> NSRect {
     NSRect::new(NSPoint::new(x, y), NSSize::new(w, h))
@@ -85,6 +87,8 @@ pub fn blur(mtm: MainThreadMarker, width: f64, height: f64) -> Retained<NSVisual
 
 /// 窗口是透明的，方形毛玻璃会在四角露出来，所以只能靠 maskImage 变圆角。
 /// 高度变了必须重画，否则圆角会被拉成椭圆。
+/// （试过整窗复用一张、只 setSize：30 次展开/折叠的 footprint 曲线与每次重建完全重合，
+///  35/71/34 vs 35/72/34，所以不必为它多养一个字段。）
 pub fn set_mask(view: &NSVisualEffectView, width: f64, height: f64) {
     let white = NSColor::whiteColor();
     let mask = RcBlock::new(move |rect: NSRect| -> Bool {
@@ -161,6 +165,10 @@ fn styled_button(
 }
 
 /// .icon-btn：无边框的动作键（▸ / ▾ / ✕ / 浏览器行的整行热区）
+///
+/// 无边框按钮按下去在 AppKit 里默认一个像素都不变（实测 ▸ 按住前后像素差为 0），
+/// 而 style.css 用 button:active{scale(.97)} 补这个反馈；这里改用单元格的
+/// NSCellHighlightByGrayPoint（objc2 0.3.2 没绑定这组常量，值取自 NSCell.h）。
 pub fn glyph_button(mtm: MainThreadMarker, glyph: &str, frame: NSRect) -> Retained<NSButton> {
     let button = NSButton::new(mtm);
     button.setFrame(frame);
@@ -168,6 +176,8 @@ pub fn glyph_button(mtm: MainThreadMarker, glyph: &str, frame: NSRect) -> Retain
     button.setTitle(&NSString::from_str(glyph));
     button.setFont(Some(&NSFont::systemFontOfSize(12.0)));
     button.setContentTintColor(Some(&NSColor::secondaryLabelColor()));
+    let cell: Retained<NSButtonCell> = unsafe { msg_send![&button, cell] };
+    cell.setHighlightsBy(NSCellStyleMask(HIGHLIGHT_BY_GRAY_POINT));
     button
 }
 

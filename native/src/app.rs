@@ -469,8 +469,13 @@ impl Controller {
         } else {
             (&ivars.panel.window, &ivars.chip.window)
         };
+        // Electron 只在 win:shown 重放入场动画：已经开着的内容变化不能再闪一次
+        let revealed = expanded && !to.isVisible();
         from.orderOut(None);
         to.orderFrontRegardless();
+        if revealed {
+            ivars.panel.play_enter();
+        }
         // win:shown → 状态行重算 + 未读点重放
         self.refresh();
         self.notify();
@@ -823,6 +828,9 @@ impl Controller {
     /// 写的是当前可见那个窗口的左上角坐标 —— 两窗共用同一个锚点，谁可见存谁
     fn persist(&self) {
         let ivars = self.ivars();
+        if ivars.panel.is_entering() {
+            return;
+        }
         let visible = if ivars.chip.window.isVisible() {
             &ivars.chip.window
         } else {
