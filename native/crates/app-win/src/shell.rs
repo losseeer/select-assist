@@ -112,6 +112,11 @@ struct Ui {
     /// 正在编辑第几条指令的模板。跟 active_prompt 分开：草稿没保存前，
     /// 输出组那个下拉显示的仍然是已生效的那条
     draft_prompt: usize,
+    /// 站点框的草稿，按模式分两槽 [会话解读, 直通]（mac 的 sites_draft 同构）。
+    /// 只有一槽的话，切模式时框里还是上一个模式的文字，保存就写进另一个列表 ——
+    /// 实测过：在会话解读里改的站点，切到直通保存后进了 directSites，chatSites 原样没动，
+    /// 而 Google/BingCN 两条被覆盖掉了。这份文件 Electron 也在读，等于毁掉用户的配置。
+    sites_draft: [String; 2],
 }
 
 thread_local! {
@@ -143,6 +148,7 @@ thread_local! {
         settings_open: false,
         dirty: false,
         draft_prompt: 0,
+        sites_draft: [String::new(), String::new()],
     });
 }
 
@@ -696,6 +702,17 @@ unsafe fn panel_action(chip: HWND, id: &'static str, row: Option<usize>) {
 fn set_mode(chip: HWND, read: bool) {
     if !UI.with(|u| apply_mode(&mut u.borrow_mut(), read)) {
         return;
+    }
+    // 站点框是跟着模式换的：切之前把当前内容收回本模式的草稿槽，
+    // 不然新模式的框里还留着旧模式的文字，保存就串到另一个列表上
+    if UI.with(|u| u.borrow().settings_open) {
+        // apply_mode 已经把 with_context 翻过去了，所以"离开的那个模式"就是 !read，
+        // 它的槽位下标是 usize::from(!(!read)) == usize::from(read)。
+        // 写成 usize::from(!read) 会把会话解读的文字存进直通的槽里 —— 第一版就这么错了，
+        // 是复现测试把它抓出来的：切到直通后框里仍然是会话解读那两条。
+        let outgoing = usize::from(read);
+        UI.with(|u| u.borrow_mut().sites_draft[outgoing] = edits::get(edits::SITES));
+        unsafe { seed_edits() };
     }
     let settings = UI.with(|u| u.borrow().settings.clone());
     if read {
@@ -1330,12 +1347,17 @@ impl Ui {
                 "
 ",
             );
-        let sites = if self.settings.with_context {
-            &self.settings.chat_sites
+        let slot = usize::from(!self.settings.with_context);
+        if self.sites_draft[slot].is_empty() {
+            let sites = if self.settings.with_context {
+                &self.settings.chat_sites
+            } else {
+                &self.settings.direct_sites
+            };
+            (template, sessions, settings::sites_text(sites))
         } else {
-            &self.settings.direct_sites
-        };
-        (template, sessions, settings::sites_text(sites))
+            (template, sessions, self.sites_draft[slot].clone())
+        }
     }
 }
 
@@ -1357,7 +1379,11 @@ unsafe fn toggle_redact(chip: HWND) {
 unsafe fn new_prompt(chip: HWND) {
     UI.with(|u| {
         let mut ui = u.borrow_mut();
-        let n = ui.settings.prompts.len() + 1;
+        // 取一个没被占用的编号：直接 len+1 在删过一条之后会造出两条同名"指令 2"
+        let used: Vec<String> = ui.settings.prompts.iter().map(|p| p.name.clone()).collect();
+        let n = (1..)
+            .find(|k| !used.contains(&format!("指令 {k}")))
+            .unwrap_or(1);
         ui.settings.prompts.push(settings::PromptTemplate {
             name: format!("指令 {n}"),
             template: "{selection}".into(),
@@ -1378,8 +1404,7 @@ unsafe fn del_prompt(chip: HWND) {
         }
         let at = ui.draft_prompt.min(ui.settings.prompts.len() - 1);
         ui.settings.prompts.remove(at);
-        ui.draft_prompt = at.min(ui.settings.prompts.len() - 1);
-        ui.settings.active_prompt = ui.draft_prompt;
+        ui.draft_prompt = at.saturating_sub(1);
         ui.dirty = true;
         true
     });
@@ -1395,13 +1420,18 @@ unsafe fn del_prompt(chip: HWND) {
 /// 文案与 mac 的 save_settings 同一套，两版一起改。
 unsafe fn save_settings(chip: HWND) {
     let template = edits::get(edits::TEMPLATE);
-    let (paths, bad_paths) = settings::parse_session_paths(&edits::get(edits::SESSIONS));
-    let (sites, bad_sites) = settings::parse_sites(&edits::get(edits::SITES));
+    let sessions_text = edits::get(edits::SESSIONS);
+    let sites_text = edits::get(edits::SITES);
+    let (paths, bad_paths) = settings::parse_session_paths(&sessions_text);
+    let (sites, bad_sites) = settings::parse_sites(&sites_text);
     if paths.is_empty() {
         flash(chip, "会话路径全部是坏行");
         return;
     }
     let read = UI.with(|u| u.borrow().settings.with_context);
+    // 框里的文字留在本模式的草稿槽里：保存不等于丢弃编辑历史，
+    // 下一次切回来看到的仍然是自己打的那几行
+    UI.with(|u| u.borrow_mut().sites_draft[usize::from(!read)] = sites_text.clone());
     UI.with(|u| {
         let mut ui = u.borrow_mut();
         let at = ui.draft_prompt;
@@ -1414,7 +1444,6 @@ unsafe fn save_settings(chip: HWND) {
         } else {
             ui.settings.direct_sites = sites;
         }
-        ui.settings.active_prompt = ui.draft_prompt;
         ui.dirty = false;
     });
     let now = UI.with(|u| u.borrow().settings.clone());
@@ -1430,7 +1459,12 @@ unsafe fn save_settings(chip: HWND) {
     }
     let mut warn = Vec::new();
     if !bad_sites.is_empty() {
-        warn.push(format!("站点第 {} 行", join_rows(&bad_sites)));
+        let which = if read {
+            "会话解读站点"
+        } else {
+            "直通站点"
+        };
+        warn.push(format!("{}第 {} 行", which, join_rows(&bad_sites)));
     }
     if !bad_paths.is_empty() {
         warn.push(format!("会话路径第 {} 行", join_rows(&bad_paths)));
