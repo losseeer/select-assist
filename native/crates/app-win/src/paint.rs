@@ -1,59 +1,21 @@
 //! chip 的绘制。走 GDI 双缓冲：Direct2D 的 HwndRenderTarget 在这台机器上 EndDraw 报成功
 //! 却从不合成上屏（同一段代码换成 GDI 立刻可见），而对一个扁平 HUD 来说 GDI 也够用。
-//! 圆角交给 DWM（DWMWCP_ROUND），所以这里只画矩形，不用自己抗锯齿。
 //!
-//! 布局用 DIP（96dpi 下的像素），绘制前按窗口 DPI 换算成物理像素；
-//! 颜色取自 static/style.css 的实测合成值。
+//! 尺寸与配色全部来自 crate::theme —— 那张表逐条抄自 mac 侧的 views.rs，
+//! 两个平台的小条必须同构，否则切换版本时视觉上会跳一下。
 
-use std::cell::OnceCell;
-
-use windows::core::w;
-use windows::Win32::Foundation::{COLORREF, HWND, RECT, SIZE};
+use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
-    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateEllipticRgn, CreateFontW,
-    CreateRoundRectRgn, CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, FillRect, FillRgn,
-    GetDC, GetTextExtentPoint32W, ReleaseDC, SelectObject, SetBkMode, SetTextColor,
-    CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DRAW_TEXT_FORMAT, DT_CENTER,
-    DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, FW_NORMAL, HDC, HFONT,
-    OUT_DEFAULT_PRECIS, SRCCOPY, TRANSPARENT,
+    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, ReleaseDC,
+    SelectObject, DT_CENTER, DT_END_ELLIPSIS, HDC, SRCCOPY,
 };
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
-// style.css --bg rgba(22,22,24,.4) 叠在无材质窗口上的实测色 (9,9,10)
-const CARD: COLORREF = COLORREF(0x000A_0909);
-// .status 用的是 --dim = rgba(235,235,245,.6)，合成到 CARD 上：0.6*235+0.4*9 ≈ 145
-const DIM: COLORREF = COLORREF(0x0097_9191);
-const ACCENT: COLORREF = COLORREF(0x00FF_840A); // #0A84FF，GDI 按 BGR 排
-const ACCENT_HOVER: COLORREF = COLORREF(0x00FF_9419);
-const WARN: COLORREF = COLORREF(0x003C_A1E5); // --warn #e5a13c，状态行报错时换成它
-const WHITE: COLORREF = COLORREF(0x00FF_FFFF);
-
-const PAD_X: f32 = 12.0;
-const GAP: f32 = 8.0;
-const DOT_W: f32 = 12.0;
-const BADGE_W: f32 = 8.0;
-const BTN_H: f32 = 24.0;
-const FONT_SIZE: f32 = 12.0;
-
-#[derive(Clone, Copy, Default)]
-pub struct RectF {
-    pub left: f32,
-    pub top: f32,
-    pub right: f32,
-    pub bottom: f32,
-}
-
-impl RectF {
-    fn to_native(self, s: f32) -> RECT {
-        RECT {
-            left: (self.left * s) as i32,
-            top: (self.top * s) as i32,
-            right: (self.right * s) as i32,
-            bottom: (self.bottom * s) as i32,
-        }
-    }
-}
+use crate::draw::{self, RectF};
+use crate::theme::{
+    ACCENT, ACCENT_HOVER, CARD, CTRL_H, DIM, DOT, GAP, ICON, PAD_X, R_CTRL, TRACK, T_BODY, WARN,
+    WHITE, WIDTH,
+};
 
 pub struct Chip {
     pub status: String,
@@ -83,64 +45,13 @@ pub struct Layout {
     pub dot: RectF,
 }
 
-thread_local! {
-    static FONT: OnceCell<HFONT> = const { OnceCell::new() };
-}
-
-fn font(hwnd: HWND) -> HFONT {
-    FONT.with(|f| {
-        *f.get_or_init(|| unsafe {
-            let dpi = GetDpiForWindow(hwnd) as f32;
-            CreateFontW(
-                -(FONT_SIZE * dpi / 96.0) as i32,
-                0,
-                0,
-                0,
-                FW_NORMAL.0 as i32,
-                0,
-                0,
-                0,
-                DEFAULT_CHARSET,
-                OUT_DEFAULT_PRECIS,
-                CLIP_DEFAULT_PRECIS,
-                CLEARTYPE_QUALITY,
-                0, // DEFAULT_PITCH | FF_DONTCARE
-                w!("Segoe UI"),
-            )
-        })
-    })
-}
-
-fn measure(hdc: HDC, s: &str) -> f32 {
-    let u: Vec<u16> = s.encode_utf16().collect();
-    let mut sz = SIZE::default();
-    unsafe {
-        if GetTextExtentPoint32W(hdc, &u, &mut sz).as_bool() {
-            sz.cx as f32
-        } else {
-            s.chars().count() as f32 * FONT_SIZE * 0.62
-        }
-    }
-}
-
-fn layout(hdc: HDC, chip: &Chip, w: f32, h: f32) -> Layout {
-    let btn_w = measure(hdc, &chip.button) + 24.0; // CSS 的 padding: 4px 12px
-    let top = (h - BTN_H) / 2.0;
-    let right = w - PAD_X;
-    let btn_left = right - btn_w;
+fn layout(hdc: HDC, chip: &Chip, s: f32, h: f32) -> Layout {
+    let btn_w = draw::measure(hdc, &chip.button, T_BODY, s) + 24.0; // CSS 的 padding: 4px 12px
+    let top = (h - CTRL_H) / 2.0;
+    let btn_left = WIDTH - PAD_X - btn_w;
     Layout {
-        button: RectF {
-            left: btn_left,
-            top,
-            right,
-            bottom: top + BTN_H,
-        },
-        dot: RectF {
-            left: PAD_X,
-            top,
-            right: PAD_X + DOT_W,
-            bottom: top + BTN_H,
-        },
+        button: RectF::new(btn_left, top, btn_w, CTRL_H),
+        dot: RectF::new(PAD_X, top, ICON, CTRL_H),
     }
 }
 
@@ -151,75 +62,52 @@ pub fn paint(hwnd: HWND, chip: &Chip) -> Layout {
         let _ = GetClientRect(hwnd, &mut rc);
     }
     let (pw, ph) = (rc.right.max(1), rc.bottom.max(1));
-    let dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
-    let s = dpi / 96.0;
+    let s = draw::scale(hwnd);
+    let dh = ph as f32 / s;
 
     unsafe {
         let sdc = GetDC(Some(hwnd));
         let mem = CreateCompatibleDC(Some(sdc));
         let bmp = CreateCompatibleBitmap(sdc, pw, ph);
-        let old_bmp = SelectObject(mem, bmp.into());
-        let old_font = SelectObject(mem, font(hwnd).into());
-        let _ = SetBkMode(mem, TRANSPARENT);
+        let old = SelectObject(mem, bmp.into());
+        draw::select_font(mem, hwnd, T_BODY);
 
-        let l = layout(mem, chip, pw as f32 / s, ph as f32 / s);
-        fill_rect(mem, pw, ph, CARD);
+        let l = layout(mem, chip, s, dh);
+        draw::fill(mem, rc, CARD);
 
-        let _ = SetTextColor(mem, DIM);
-        draw_text(
-            mem,
-            "▸",
-            l.dot.to_native(s),
-            DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
-        );
+        // ▸ 带底槽（mac 的 socket_button）：光一个字形读起来不像控件
+        let socket = l.dot.to_native(s);
+        draw::fill_round(mem, socket, R_CTRL, s, TRACK);
+        draw::text(mem, "▸", socket, DIM, DT_CENTER | draw::line());
 
         // 未读点占的槽位永远留着：亮灭都不动布局，也不会压到按钮文字（同 mac 的 badge_x）
-        let status_right = l.button.left - GAP - BADGE_W;
-        let _ = SetTextColor(mem, if chip.status_err { WARN } else { DIM });
-        draw_text(
+        let status_x = l.dot.right + GAP;
+        draw::text(
             mem,
             &chip.status,
-            RectF {
-                left: l.dot.right + GAP,
-                top: 0.0,
-                right: status_right,
-                bottom: ph as f32 / s,
-            }
-            .to_native(s),
-            DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+            RectF::new(status_x, 0.0, l.button.left - GAP - DOT - status_x, dh).to_native(s),
+            if chip.status_err { WARN } else { DIM },
+            DT_END_ELLIPSIS | draw::line(),
         );
 
         if chip.badge {
-            let r = RectF {
-                left: l.button.left - GAP - BADGE_W,
-                top: (ph as f32 / s - BADGE_W) / 2.0,
-                right: l.button.left - GAP,
-                bottom: (ph as f32 / s + BADGE_W) / 2.0,
-            };
-            fill_ellipse(mem, r.to_native(s), ACCENT);
+            let dot = RectF::new(l.button.left - GAP - DOT, (dh - DOT) / 2.0, DOT, DOT);
+            draw::fill_ellipse(mem, dot.to_native(s), ACCENT);
         }
 
         let btn = l.button.to_native(s);
-        let corner = (6.0 * s) as i32 * 2;
-        fill_round_rect(
+        draw::fill_round(
             mem,
             btn,
-            corner,
-            corner,
+            R_CTRL,
+            s,
             if chip.hover { ACCENT_HOVER } else { ACCENT },
         );
-        let _ = SetTextColor(mem, WHITE);
-        draw_text(
-            mem,
-            &chip.button,
-            btn,
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
-        );
+        draw::text(mem, &chip.button, btn, WHITE, DT_CENTER | draw::line());
 
         let _ = BitBlt(sdc, 0, 0, pw, ph, Some(mem), 0, 0, SRCCOPY);
 
-        SelectObject(mem, old_font);
-        SelectObject(mem, old_bmp);
+        SelectObject(mem, old);
         let _ = DeleteObject(bmp.into());
         let _ = DeleteDC(mem);
         ReleaseDC(Some(hwnd), sdc);
@@ -229,50 +117,12 @@ pub fn paint(hwnd: HWND, chip: &Chip) -> Layout {
 
 pub fn hit(layout: &Layout, pt: (i32, i32), dpi: f32) -> Option<&'static str> {
     let s = 96.0 / dpi;
-    let x = pt.0 as f32 * s;
-    let y = pt.1 as f32 * s;
-    let inside = |r: RectF| x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
-    if inside(layout.button) {
+    let (x, y) = (pt.0 as f32 * s, pt.1 as f32 * s);
+    if layout.button.contains(x, y) {
         Some("button")
-    } else if inside(layout.dot) {
+    } else if layout.dot.contains(x, y) {
         Some("dot")
     } else {
         None
     }
-}
-
-unsafe fn fill_rect(hdc: HDC, w: i32, h: i32, color: COLORREF) {
-    let b = CreateSolidBrush(color);
-    FillRect(
-        hdc,
-        &RECT {
-            left: 0,
-            top: 0,
-            right: w,
-            bottom: h,
-        },
-        b,
-    );
-    let _ = DeleteObject(b.into());
-}
-
-unsafe fn fill_round_rect(hdc: HDC, r: RECT, rx: i32, ry: i32, color: COLORREF) {
-    let rg = CreateRoundRectRgn(r.left, r.top, r.right + 1, r.bottom + 1, rx, ry);
-    let b = CreateSolidBrush(color);
-    let _ = FillRgn(hdc, rg, b);
-    let _ = DeleteObject(b.into());
-    let _ = DeleteObject(rg.into());
-}
-
-unsafe fn fill_ellipse(hdc: HDC, r: RECT, color: COLORREF) {
-    let rg = CreateEllipticRgn(r.left, r.top, r.right, r.bottom);
-    let b = CreateSolidBrush(color);
-    let _ = FillRgn(hdc, rg, b);
-    let _ = DeleteObject(b.into());
-    let _ = DeleteObject(rg.into());
-}
-
-unsafe fn draw_text(hdc: HDC, text: &str, mut rc: RECT, flags: DRAW_TEXT_FORMAT) {
-    let mut u: Vec<u16> = text.encode_utf16().collect();
-    let _ = DrawTextW(hdc, &mut u, &mut rc, flags);
 }

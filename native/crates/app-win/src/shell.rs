@@ -29,12 +29,15 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::clip;
+use crate::theme;
 use settings::AppSettings;
 
-const WIDTH: i32 = 400;
-const HEIGHT: i32 = 44;
+/// Electron defaultChipPos()：主屏 workArea 右上角内缩 16 / 60。
+/// 宽高本身在 crate::theme 里，和绘制共用同一个数
 const MARGIN_RIGHT: i32 = 16;
 const MARGIN_TOP: i32 = 60;
+const WIDTH: i32 = theme::WIDTH as i32;
+const HEIGHT: i32 = theme::CHIP_H as i32;
 const SMOKE_TIMER: usize = 0xA0;
 const HEARTBEAT: usize = 0xA1;
 const SAVETICK: usize = 0xA2;

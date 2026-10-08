@@ -7,9 +7,13 @@
 #[cfg(windows)]
 mod clip;
 #[cfg(windows)]
+mod draw;
+#[cfg(windows)]
 mod paint;
 #[cfg(windows)]
 mod shell;
+#[cfg(windows)]
+mod theme;
 #[cfg(windows)]
 mod webview;
 #[cfg(windows)]
