@@ -389,8 +389,9 @@ unsafe fn report(hwnd: HWND) {
     let mut r = RECT::default();
     let _ = GetWindowRect(hwnd, &mut r);
     println!(
-        "app-win pid={} rect={}x{}@{},{} dpi={}",
+        "app-win pid={} hwnd={:#x} rect={}x{}@{},{} dpi={}",
         std::process::id(),
+        hwnd.0 as usize,
         r.right - r.left,
         r.bottom - r.top,
         r.left,
