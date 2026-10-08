@@ -4,11 +4,12 @@
   "长什么样"，看不到"里面到底是什么"——多行框一换行，截图里字段分隔符和折行根本分不开。
   给它一个 -Text 就是写入（模拟用户打字），不给就是读出来。
 
-  已知局限：报出来的 len 对非 ASCII 不可信（实测 46 个 UTF-16 单元的默认模板报成 73，
-  33 个单元的串报成 51，像是按本地代码页的字节数在算）。**别拿这个 len 当 Unicode
-  正确性的判据** —— 要验中文有没有走样，去看落盘后的 settings.json，或者用 app 自己的
-  edits::get()。app 侧的 Unicode 路径另有证据：clip.rs 的测试拿 emoji 过了一遍真剪贴板。
-  写入路径本身是对的（写进去的中文在 JSON 里逐字正确），只有回读的长度不准。
+  一个把整轮测试带偏过的坑，记在这里：len 曾经按本地代码页的**字节数**报（"中文abc"
+  5 个 UTF-16 单元报 7，因为中文在 GBK 里是 4 字节），看起来像 app 把中文弄坏了。
+  原因是 WM_GETTEXTLENGTH 那个重载没写 CharSet，.NET 按 ANSI 默认解析成了 SendMessageA，
+  而 EDIT 控件对 ANSI  flavor 的消息回的就是字节数。文字本身一直是对的（同一个脚本
+  读出来的正文逐字正确），错的只有那个长度。现在重载钉死在 SendMessageW 上。
+  教训：拿工具的数字给 app 定罪之前，先把正文本身读出来看。
 #>
 param(
     [Parameter(Mandatory = $true, Position = 0)]
@@ -28,7 +29,7 @@ public class Ed {
     public static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, StringBuilder l);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
     public static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, string l);
-    [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")] public static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
     public static IntPtr NthChild(IntPtr parent, int n) {
         IntPtr h = IntPtr.Zero;
         for (int i = 0; i <= n; i++) {

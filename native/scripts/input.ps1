@@ -123,14 +123,17 @@ public class Input {
         a[0] = Mouse(WHEEL, 0, 0, (uint)(notches * 120));
         SendInput(1, a, Marshal.SizeOf(typeof(INPUT)));
     }
-    /// VK_PACKET：把一个 UTF-16 码元当"按键"送进去，中文这样才进得去焦点窗口
+    /// 发一个 Unicode 字符。wVk 必须是 0：填 VK_PACKET(0xE7) 是**收**那一侧的 wParam，
+    /// 发的时候填它，系统会改走键盘布局的翻译，非 ASCII 只剩低字节 ——
+    /// 实测 "测试"(U+6D4B U+8BD5) 打出来是 "KÕ"(U+4B U+D5)，看着像 app 把中文弄坏了。
     public static void TypeChar(char c) {
         INPUT[] a = new INPUT[2];
         a[0] = new INPUT(); a[0].type = INPUT_KEYBOARD;
-        a[0].u.ki.wVk = 0xE7; a[0].u.ki.wScan = (ushort)c; a[0].u.ki.dwFlags = UNICODE;
+        a[0].u.ki.wVk = 0; a[0].u.ki.wScan = (ushort)c; a[0].u.ki.dwFlags = UNICODE;
         a[1] = new INPUT(); a[1].type = INPUT_KEYBOARD;
-        a[1].u.ki.wVk = 0xE7; a[1].u.ki.wScan = (ushort)c; a[1].u.ki.dwFlags = UNICODE | KEYUP;
-        SendInput(2, a, Marshal.SizeOf(typeof(INPUT)));
+        a[1].u.ki.wVk = 0; a[1].u.ki.wScan = (ushort)c; a[1].u.ki.dwFlags = UNICODE | KEYUP;
+        uint n = SendInput(2, a, Marshal.SizeOf(typeof(INPUT)));
+        if (n != 2) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
     }
     public static bool TryPoint(IntPtr h, int cx, int cy, out int sx, out int sy) {
         P p = new P(); p.x = cx; p.y = cy;
