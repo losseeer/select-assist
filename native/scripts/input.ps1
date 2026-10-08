@@ -17,6 +17,8 @@
     input.ps1             -Action keys -Keys "^a"                 # SendKeys 语法（^=Ctrl +=Shift %=Alt）
 
   注意：-Real 会移动光标并在结束时移回去，但中途你动鼠标会和它抢。
+  急停：物理按住 Esc，下一次调用会在注入任何输入之前退出（drag 会先松开左键再退），
+  所以按住不放就能让一整轮停下来。检查点在每次调用开头、drag 的每一步、每个字符之前。
 #>
 [CmdletBinding()]
 param(
@@ -129,6 +131,7 @@ public class Input {
         sx = p.x; sy = p.y; return true;
     }
     public static IntPtr Send(IntPtr h, uint msg, IntPtr w, IntPtr l) { return SendMessage(h, msg, w, l); }
+    [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
     public static bool Post(IntPtr h, uint msg, IntPtr w, IntPtr l) { return PostMessage(h, msg, w, l); }
     public static IntPtr TopAt(int x, int y) { P p = new P(); p.x = x; p.y = y; return WindowFromPoint(p); }
     public static void Get(out int x, out int y) { P p; GetCursorPos(out p); x = p.x; y = p.y; }
@@ -155,6 +158,17 @@ $WM_MOUSEWHEEL = 0x020A; $WM_NCHITTEST = 0x0084
 $MK_LBUTTON = 1
 
 if ($Action -ne 'keys' -and $Hwnd -eq 0) { '这个动作要 -Hwnd'; exit 2 }
+
+# -Real 会抢走鼠标键盘，所以留一条人能按得动的退出路径：按住 Esc 再触发下一步，
+# 这一步就不注入输入并以 3 退出。轮子之间也会检查，按住不放能让整轮停下来。
+function Test-Abort {
+    if ([Input]::GetAsyncKeyState(0x1B) -lt 0) {
+        'ABORT: Esc 被按住，未注入任何输入'
+        exit 3
+    }
+}
+Test-Abort
+
 $before = New-Object System.Drawing.Point
 [Input]::Get([ref]$before.x, [ref]$before.y) | Out-Null
 
@@ -192,13 +206,18 @@ try {
                 $b = Get-ScreenPoint $Hwnd $ToX $ToY
                 [Input]::RealMove($a.x, $a.y); Start-Sleep -Milliseconds 120
                 [Input]::RealDown(); Start-Sleep -Milliseconds 60
+                $aborted = $false
                 # 分步移动：一步到位会被系统当成点击而不是拖动
                 for ($i = 1; $i -le 12; $i++) {
                     $px = [int]($a.x + ($b.x - $a.x) * $i / 12)
                     $py = [int]($a.y + ($b.y - $a.y) * $i / 12)
                     [Input]::RealMove($px, $py); Start-Sleep -Milliseconds 25
+                    # 中途按 Esc 只中断循环，不在左键还按着的时候 exit：
+                    # 那样会跳过 RealUp，用户回来发现左键一直是按下状态
+                    if ([Input]::GetAsyncKeyState(0x1B) -lt 0) { $aborted = $true; break }
                 }
                 [Input]::RealUp()
+                if ($aborted) { "ABORT: Esc，已松开左键后停止"; exit 3 }
                 "real drag $($a.x),$($a.y) -> $($b.x),$($b.y)"
             } else {
                 # 非真实输入下"拖"只能验 hit-test 说这是不是标题区，移动本身是 DWM 做的
@@ -233,7 +252,7 @@ try {
                 [System.Windows.Forms.SendKeys]::SendWait($Keys)
                 "sent keys: $Keys"
             } else {
-                foreach ($c in $Text.ToCharArray()) { [Input]::TypeChar($c); Start-Sleep -Milliseconds 12 }
+                foreach ($c in $Text.ToCharArray()) { Test-Abort; [Input]::TypeChar($c); Start-Sleep -Milliseconds 12 }
                 "typed $($Text.Length) chars into the focused window"
             }
         }
