@@ -68,11 +68,19 @@ pub struct PanelView {
 
 /// 一帧的绘制上下文：DC、DPI 换算、以及边走边收集的命中表。
 /// 这些原先是四个函数参数，加上控件自己的几个就撞上 clippy 的参数上限了。
+/// 一块命中区。idx 是同一个 id 下的序号 —— 会话浏览器的每一行、站点按钮的每一个，
+/// id 都一样，只有序号能分派「点的是哪一个」
+pub struct Hit {
+    pub id: Id,
+    pub r: RectF,
+    pub idx: Option<usize>,
+}
+
 pub struct Pen {
     hdc: HDC,
     hwnd: HWND,
     s: f32,
-    hits: Vec<(Id, RectF)>,
+    hits: Vec<Hit>,
 }
 
 impl Pen {
@@ -108,7 +116,7 @@ impl Pen {
         let r = RectF::new(if from_right { x - w } else { x }, y, w, CTRL_H);
         self.round(r, R_CTRL, if hot { ACCENT_HOVER } else { ACCENT });
         self.line(label, r, WHITE, T_BODY, CENTER);
-        self.hits.push((id, r));
+        self.hits.push(Hit { id, r, idx: None });
         w
     }
 
@@ -117,7 +125,7 @@ impl Pen {
         let r = RectF::new(x, y, w, CTRL_H);
         self.round(r, R_CTRL, if hot { FILL } else { TRACK });
         self.line(label, r, INK, T_BODY, CENTER);
-        self.hits.push((id, r));
+        self.hits.push(Hit { id, r, idx: None });
     }
 
     /// 图标位（▾ / ✕）：只有字形，socket 决定要不要给一块底
@@ -127,7 +135,7 @@ impl Pen {
             self.round(r, R_CTRL, TRACK);
         }
         self.line(glyph, r, DIM, T_BODY, CENTER);
-        self.hits.push((id, r));
+        self.hits.push(Hit { id, r, idx: None });
     }
 }
 
@@ -184,7 +192,11 @@ fn mode_row(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
         }
         p.line(name, r, if *on { INK } else { DIM }, T_BODY, CENTER);
         // 点当前已选中的那一段什么也不做，所以分成两个 id，shell 那边少一次判断
-        p.hits.push((if *on { "mode-on" } else { "mode-off" }, r));
+        p.hits.push(Hit {
+            id: if *on { "mode-on" } else { "mode-off" },
+            r,
+            idx: None,
+        });
     }
 
     if v.read_mode {
@@ -300,7 +312,11 @@ fn browser(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
             T_META,
             LEFT,
         );
-        p.hits.push(("browser", r));
+        p.hits.push(Hit {
+            id: "browser",
+            r,
+            idx: Some(i),
+        });
     }
     if v.browser_rows.is_empty() {
         p.line(
@@ -337,15 +353,23 @@ fn output(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
     );
     // 站点从右边界倒着排；放不下就不画（面板不横向滚动，挤成一团更难看）
     let limit = copy_x + copy_w + GAP;
+    // 从右往左量、从左往右画：idx 必须跟 v.sites 同序，否则点第三个会开出第四个
+    let mut slots = Vec::new();
     let mut x = WIDTH - PAD_X;
-    for name in v.sites.iter().rev() {
+    for (i, name) in v.sites.iter().enumerate().rev() {
         let w = p.pill_width(name);
         if x - w < limit {
             break;
         }
         x -= w;
-        p.button("site", name, x, y, w, v.hover == Some("site"));
+        slots.push((i, name.clone(), x, w));
         x -= GAP;
+    }
+    for (i, name, sx, w) in slots.into_iter().rev() {
+        p.button("site", &name, sx, y, w, v.hover == Some("site"));
+        if let Some(last) = p.hits.last_mut() {
+            last.idx = Some(i);
+        }
     }
     y + CTRL_H
 }
@@ -355,28 +379,18 @@ fn output(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
 /// 一帧画完的结果：命中区表 + 内容应有的高度（DIP）
 #[derive(Default)]
 pub struct Layout {
-    hits: Vec<(Id, RectF)>,
+    hits: Vec<Hit>,
     pub height: f32,
 }
 
 impl Layout {
     /// 倒着查：后画的叠在上面，先命中上面那个
-    pub fn hit(&self, x: f32, y: f32) -> Option<Id> {
+    pub fn hit(&self, x: f32, y: f32) -> Option<(Id, Option<usize>)> {
         self.hits
             .iter()
             .rev()
-            .find(|(_, r)| r.contains(x, y))
-            .map(|(id, _)| *id)
-    }
-
-    /// 命中的是会话列表第几行；不在列表上返回 None
-    pub fn hit_row(&self, x: f32, y: f32) -> Option<usize> {
-        self.hits
-            .iter()
-            .rev()
-            .enumerate()
-            .find(|(_, (id, r))| *id == "browser" && r.contains(x, y))
-            .map(|(i, _)| self.hits.len() - 1 - i)
+            .find(|h| h.r.contains(x, y))
+            .map(|h| (h.id, h.idx))
     }
 }
 

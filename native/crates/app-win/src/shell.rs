@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::env;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use windows::core::w;
+use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE,
@@ -19,13 +19,17 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
     GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
+use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetCursorPos,
-    GetMessageW, GetWindowRect, KillTimer, LoadCursorW, PostQuitMessage, RegisterClassExW,
-    SetTimer, SetWindowPos, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, HTCAPTION,
-    HTCLIENT, HWND_TOPMOST, IDC_ARROW, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SW_HIDE, SW_SHOW, WM_DESTROY, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT, WM_SIZE,
-    WM_TIMER, WNDCLASSEXW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    AppendMenuW, CheckMenuItem, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
+    DestroyWindow, DispatchMessageW, GetClientRect, GetCursorPos, GetMessageW, GetWindowRect,
+    KillTimer, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassExW, SetForegroundWindow,
+    SetTimer, SetWindowPos, ShowWindow, TrackPopupMenu, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
+    HTCAPTION, HTCLIENT, HWND_TOPMOST, IDC_ARROW, MF_BYCOMMAND, MF_CHECKED, MF_STRING, MSG,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNORMAL,
+    TPM_BOTTOMALIGN, TPM_LEFTBUTTON, TPM_RETURNCMD, WM_DESTROY, WM_LBUTTONUP, WM_MOUSEMOVE,
+    WM_NCHITTEST, WM_NULL, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 use crate::clip;
@@ -596,10 +600,10 @@ unsafe fn panel_action(chip: HWND, id: &'static str, row: Option<usize>) {
         "refresh" => browse_sessions(),
         "browser" => pick_session(row),
         "copy" => copy_payload(chip),
-        "agent" | "turns" | "prompt" | "site" => {} // M4b / M4c
+        "agent" | "turns" | "prompt" => pick_menu(id),
+        "site" => open_site(chip, row),
         _ => {}
     }
-    let _ = row;
 }
 
 /// 换模式：写回设置、重算 payload，直通模式要把上下文剥掉
@@ -679,6 +683,170 @@ fn pick_session(row: Option<usize>) {
     });
 }
 
+/* ---------- 下拉与站点 ---------- */
+
+/// 候选值与 mac 的 agent_pick / turns_pick 同一张表，别在这儿加第 6 个 agent
+const AGENTS: [&str; 6] = [
+    "auto",
+    "claude-code",
+    "codex",
+    "workbuddy",
+    "qoder",
+    "project",
+];
+const TURNS: [(&str, usize); 5] = [
+    ("4 轮", 4),
+    ("8 轮", 8),
+    ("16 轮", 16),
+    ("30 轮", 30),
+    ("全部", 0),
+];
+
+/// 某个下拉的候选文字 + 当前选中的下标
+fn menu_for(ui: &Ui, id: &'static str) -> (Vec<String>, usize) {
+    match id {
+        "agent" => {
+            let current = AGENTS.iter().position(|a| *a == ui.agent).unwrap_or(0);
+            (AGENTS.iter().map(|a| a.to_string()).collect(), current)
+        }
+        "turns" => {
+            let current = TURNS
+                .iter()
+                .position(|(_, t)| *t == ui.settings.context_turns)
+                .unwrap_or(1);
+            (TURNS.iter().map(|(l, _)| l.to_string()).collect(), current)
+        }
+        _ => {
+            let current = ui
+                .settings
+                .active_prompt
+                .min(ui.settings.prompts.len().saturating_sub(1));
+            let names: Vec<String> = ui.settings.prompts.iter().map(|p| p.name.clone()).collect();
+            (names, current)
+        }
+    }
+}
+
+/// 把一次选择落到状态上：改设置、必要时重挂上下文、重算 payload。
+/// 返回 true 表示要重画。单独拆出来是因为 TrackPopupMenu 是模态的，
+/// 无人值守时没法点它 —— 这一段得能脱离菜单被测试。
+fn apply_pick(ui: &mut Ui, id: &'static str, index: usize) -> bool {
+    match id {
+        "agent" => match AGENTS.get(index) {
+            Some(agent) => ui.agent = (*agent).to_string(),
+            None => return false,
+        },
+        "turns" => match TURNS.get(index) {
+            Some((_, turns)) => ui.settings.context_turns = *turns,
+            None => return false,
+        },
+        "prompt" => {
+            if index >= ui.settings.prompts.len() {
+                return false;
+            }
+            ui.settings.active_prompt = index;
+        }
+        _ => return false,
+    }
+    // 有选区才值得重算：没选区时 payload 本来就是 None，重算只会白读一遍磁盘
+    if ui.pack.selection.is_some() {
+        let settings = ui.settings.clone();
+        let agent = ui.agent.clone();
+        // 浏览器里已经挑过一行就沿用那一条，否则让 pack 按 agent 自己找
+        let picked = ui.browser_sel.and_then(|i| ui.browser_refs.get(i));
+        if settings.with_context {
+            ui.pack.attach(
+                &settings,
+                &agent,
+                settings.context_turns,
+                picked.map(|r| r.file_path.as_str()),
+                picked.and_then(|r| r.session_id.as_deref()),
+            );
+        }
+        ui.payload = ui.pack.payload(&settings);
+    }
+    true
+}
+
+unsafe fn pick_menu(id: &'static str) {
+    let panel = UI.with(|u| u.borrow().panel);
+    if panel.0.is_null() {
+        return;
+    }
+    let (items, current) = UI.with(|u| menu_for(&u.borrow(), id));
+    let menu = match CreatePopupMenu() {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+    let mut buffers: Vec<Vec<u16>> = Vec::with_capacity(items.len());
+    for (i, text) in items.iter().enumerate() {
+        buffers.push(text.encode_utf16().chain(std::iter::once(0)).collect());
+        let _ = AppendMenuW(menu, MF_STRING, i + 1, PCWSTR(buffers[i].as_ptr()));
+    }
+    let _ = CheckMenuItem(menu, (current + 1) as u32, (MF_CHECKED | MF_BYCOMMAND).0);
+    // 菜单要挂在光标下，并且必须先让本窗口成为前台，否则点别处不会自动收起
+    let mut pt = POINT::default();
+    let _ = GetCursorPos(&mut pt);
+    let _ = SetForegroundWindow(panel);
+    let picked = TrackPopupMenu(
+        menu,
+        TPM_RETURNCMD | TPM_BOTTOMALIGN | TPM_LEFTBUTTON,
+        pt.x,
+        pt.y,
+        None,
+        panel,
+        None,
+    );
+    let _ = DestroyMenu(menu);
+    // MSDN 明确要求：菜单关掉后补一条消息，否则下一次点标题区不会先收起菜单
+    let _ = PostMessageW(Some(panel), WM_NULL, WPARAM(0), LPARAM(0));
+    if picked.0 > 0 && UI.with(|u| apply_pick(&mut u.borrow_mut(), id, picked.0 as usize - 1)) {
+        persist_settings();
+        let chip = UI.with(|u| u.borrow().hwnd);
+        repaint(chip);
+    }
+}
+
+fn persist_settings() {
+    let settings = UI.with(|u| u.borrow().settings.clone());
+    if let Err(e) = store().save(&settings) {
+        println!("写设置失败: {e}");
+    }
+}
+
+/// 开站点。只放 http/https —— 与 Electron 的 site:open 同一个校验，
+/// 传任意字符串给 ShellExecuteW 等于把「点一下按钮」变成「执行任意关联程序」
+unsafe fn open_site(chip: HWND, index: Option<usize>) {
+    let target = UI.with(|u| {
+        let ui = u.borrow();
+        let sites = if ui.settings.with_context {
+            &ui.settings.chat_sites
+        } else {
+            &ui.settings.direct_sites
+        };
+        index.and_then(|i| sites.get(i)).cloned()
+    });
+    let Some(target) = target else { return };
+    let url = target.url.trim();
+    let scheme = url.split_once("://").map_or("", |(s, _)| s);
+    if !scheme.eq_ignore_ascii_case("https") && !scheme.eq_ignore_ascii_case("http") {
+        flash(chip, "站点地址不是 http/https");
+        return;
+    }
+    let wide: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+    let ok = ShellExecuteW(
+        Some(chip),
+        w!("open"),
+        PCWSTR(wide.as_ptr()),
+        None,
+        None,
+        SW_SHOWNORMAL,
+    );
+    if (ok.0 as isize) <= 32 {
+        flash(chip, "打不开站点");
+    }
+}
+
 unsafe extern "system" fn panel_wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
         WM_PAINT => {
@@ -711,10 +879,10 @@ unsafe extern "system" fn panel_wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPAR
             let (hover, row) = UI.with(|u| {
                 let ui = u.borrow();
                 let s = draw::scale(hwnd);
-                (
-                    ui.panel_layout.hit(pt.0 as f32 / s, pt.1 as f32 / s),
-                    ui.panel_layout.hit_row(pt.0 as f32 / s, pt.1 as f32 / s),
-                )
+                match ui.panel_layout.hit(pt.0 as f32 / s, pt.1 as f32 / s) {
+                    Some((id, idx)) => (Some(id), (id == "browser").then_some(idx).flatten()),
+                    None => (None, None),
+                }
             });
             let changed = UI.with(|u| {
                 let mut ui = u.borrow_mut();
@@ -736,12 +904,11 @@ unsafe extern "system" fn panel_wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPAR
             let hit = UI.with(|u| {
                 let ui = u.borrow();
                 let s = draw::scale(hwnd);
-                let (x, y) = (pt.0 as f32 / s, pt.1 as f32 / s);
-                (ui.panel_layout.hit(x, y), ui.panel_layout.hit_row(x, y))
+                ui.panel_layout.hit(pt.0 as f32 / s, pt.1 as f32 / s)
             });
-            if let Some(id) = hit.0 {
+            if let Some((id, idx)) = hit {
                 let chip = UI.with(|u| u.borrow().hwnd);
-                panel_action(chip, id, hit.1);
+                panel_action(chip, id, idx);
             }
             let _ = InvalidateRect(Some(hwnd), None, false);
             LRESULT(0)
@@ -892,5 +1059,48 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, w, l),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// thread_local 每线程一份，测试各拿各的 Ui，不会互相踩
+    fn with_ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R {
+        UI.with(|u| f(&mut u.borrow_mut()))
+    }
+
+    #[test]
+    fn turns_menu_maps_back_to_the_setting() {
+        with_ui(|u| {
+            u.settings.context_turns = 16;
+            let (items, current) = menu_for(u, "turns");
+            assert_eq!(items.len(), TURNS.len());
+            assert_eq!(items[current], "16 轮");
+            assert!(apply_pick(u, "turns", 4));
+            assert_eq!(u.settings.context_turns, 0, "「全部」就是 0，由 pack 认");
+            assert!(!apply_pick(u, "turns", 99), "越界的选择要被拒掉");
+        });
+    }
+
+    #[test]
+    fn agent_menu_defaults_to_auto() {
+        with_ui(|u| {
+            let (items, current) = menu_for(u, "agent");
+            assert_eq!(items[current], "auto");
+            assert!(apply_pick(u, "agent", 2));
+            assert_eq!(u.agent, "codex");
+        });
+    }
+
+    /// 没有选区时 apply_pick 只改状态，绝不去读磁盘上的会话
+    #[test]
+    fn picking_without_a_selection_does_no_rework() {
+        with_ui(|u| {
+            u.payload = None;
+            assert!(apply_pick(u, "prompt", 0));
+            assert!(u.payload.is_none());
+        });
     }
 }
