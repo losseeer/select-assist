@@ -13,13 +13,13 @@ use objc2::{define_class, msg_send, sel, DeclaredClass, MainThreadMarker, MainTh
 use objc2_app_kit::{NSApplication, NSButton, NSWindow, NSWindowDelegate};
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSTimer};
 
-use crate::capture::{self, ClipNote};
 use crate::chip::{self, Chip};
 use crate::context::{self, Pack, Payload};
 use crate::geo::{Geometry, Rect};
 use crate::panel::{Panel, Row};
 use crate::pasteboard;
 use crate::views;
+use capture::{self, ClipNote};
 use ctxpack::adapters::SessionRef;
 use settings::{AppSettings, PromptTemplate, SessionPath, Settings, SiteTarget};
 

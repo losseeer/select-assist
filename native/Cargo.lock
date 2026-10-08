@@ -15,6 +15,7 @@ dependencies = [
 name = "app-win"
 version = "0.1.0"
 dependencies = [
+ "capture",
  "ctxpack",
  "settings",
  "webview2-com",
@@ -34,6 +35,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdeb9d870516001442e364c5220d3574d2da8dc765554b4a617230d33fa58ef5"
 dependencies = [
  "objc2",
+]
+
+[[package]]
+name = "capture"
+version = "0.1.0"
+dependencies = [
+ "ctxpack",
 ]
 
 [[package]]
@@ -448,6 +456,7 @@ name = "select-assist-native"
 version = "0.1.0"
 dependencies = [
  "block2",
+ "capture",
  "ctxpack",
  "dirs",
  "objc2",

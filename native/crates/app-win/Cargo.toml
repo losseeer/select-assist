@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 ctxpack = { path = "../ctxpack" }
+capture = { path = "../capture" }
 settings = { path = "../settings" }
 
 # 只在 Windows 上取真正用到的 API；mac/Linux 上这个 crate 编成一个空 main，
@@ -33,4 +34,8 @@ windows = { version = "0.62", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_HiDpi",
     "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_SystemInformation",
 ] }

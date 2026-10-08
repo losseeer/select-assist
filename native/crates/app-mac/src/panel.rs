@@ -368,7 +368,7 @@ impl Panel {
         views::set_tip(&collapse, Some("折回小条"));
         let status = views::label(
             mtm,
-            crate::capture::NO_SELECTION,
+            capture::NO_SELECTION,
             T_BODY,
             &views::dim(),
             views::rect(0.0, 0.0, 1.0, LINE_H),
@@ -472,7 +472,7 @@ impl Panel {
         // 与下面的 12pt 状态行、11pt 字数行形成三级层级（原来三行都是 12pt 灰字）
         let session_line = views::label(
             mtm,
-            crate::capture::CONTEXT_EMPTY,
+            capture::CONTEXT_EMPTY,
             T_HEAD,
             &views::ink(),
             views::rect(0.0, 0.0, BODY_W, LINE_H + 2.0),

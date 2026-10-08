@@ -22,10 +22,11 @@ use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
 // style.css --bg rgba(22,22,24,.4) 叠在无材质窗口上的实测色 (9,9,10)
 const CARD: COLORREF = COLORREF(0x000A_0909);
-const FG: COLORREF = COLORREF(0x00EB_EBEB);
-const DIM: COLORREF = COLORREF(0x00A8_A59B);
+// .status 用的是 --dim = rgba(235,235,245,.6)，合成到 CARD 上：0.6*235+0.4*9 ≈ 145
+const DIM: COLORREF = COLORREF(0x0097_9191);
 const ACCENT: COLORREF = COLORREF(0x00FF_840A); // #0A84FF，GDI 按 BGR 排
 const ACCENT_HOVER: COLORREF = COLORREF(0x00FF_9419);
+const WARN: COLORREF = COLORREF(0x003C_A1E5); // --warn #e5a13c，状态行报错时换成它
 const WHITE: COLORREF = COLORREF(0x00FF_FFFF);
 
 const PAD_X: f32 = 12.0;
@@ -56,6 +57,8 @@ impl RectF {
 
 pub struct Chip {
     pub status: String,
+    /// 状态行是不是错误提示（对应 .status.err，只换颜色）
+    pub status_err: bool,
     pub badge: bool,
     pub button: String,
     pub hover: bool,
@@ -64,7 +67,8 @@ pub struct Chip {
 impl Default for Chip {
     fn default() -> Self {
         Self {
-            status: "还没有选区".into(),
+            status: capture::NO_SELECTION.into(),
+            status_err: false,
             badge: false,
             button: "取入选区".into(),
             hover: false,
@@ -169,9 +173,9 @@ pub fn paint(hwnd: HWND, chip: &Chip) -> Layout {
             DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
         );
 
-        // 状态文字宁可省略号，也不许压住徽章和按钮
-        let status_right = l.button.left - GAP - if chip.badge { BADGE_W + GAP } else { 0.0 };
-        let _ = SetTextColor(mem, FG);
+        // 未读点占的槽位永远留着：亮灭都不动布局，也不会压到按钮文字（同 mac 的 badge_x）
+        let status_right = l.button.left - GAP - BADGE_W;
+        let _ = SetTextColor(mem, if chip.status_err { WARN } else { DIM });
         draw_text(
             mem,
             &chip.status,

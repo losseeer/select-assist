@@ -1,5 +1,4 @@
 mod app;
-mod capture;
 mod chip;
 mod context;
 mod flipped;

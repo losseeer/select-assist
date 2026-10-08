@@ -1,5 +1,6 @@
-# 一个 workspace、两个 crate：ctxpack 是平台无关的逻辑核心，app-mac 是 AppKit 外壳。
 # 拆开的理由就是这次 Windows 适配踩到的：同一份逻辑在两处实现，修一处忘另一处。
+# ctxpack / capture / settings 是平台无关的逻辑，app-mac 与 app-win 只是各自的壳，
+# test-support 给逻辑 crate 供夹具。外壳之间不互相依赖，也不许把逻辑漏回壳里。
 [workspace]
-members = ["crates/ctxpack", "crates/app-mac", "crates/app-win", "crates/settings", "crates/test-support"]
+members = ["crates/ctxpack", "crates/capture", "crates/settings", "crates/app-mac", "crates/app-win", "crates/test-support"]
 resolver = "2"

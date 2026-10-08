@@ -1,4 +1,4 @@
-# Prints the REAL Win32 rect of every select-assist window — dev builds run as electron.exe,
+﻿# Prints the REAL Win32 rect of every select-assist window — dev builds run as electron.exe,
 # packaged ones as select-assist.exe — so a mismatch with the sizes in src/main/index.ts is
 # visible. Needed because Electron keeps reporting the size it asked for: a transparent window
 # with a DWM backdrop is silently grown to a 64 physical-px minimum height (getBounds() still

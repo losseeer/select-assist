@@ -1,0 +1,10 @@
+[package]
+name = "capture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# 两个外壳共用的选区/状态行策略：什么算一次有效复制、状态行怎么写。
+# 平台相关的只有"怎么读剪贴板"，那部分留在各自的外壳里。
+[dependencies]
+ctxpack = { path = "../ctxpack" }

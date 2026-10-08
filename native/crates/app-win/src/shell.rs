@@ -21,12 +21,14 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
-    GetWindowRect, LoadCursorW, PostQuitMessage, RegisterClassExW, SetTimer, SetWindowPos,
-    ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, HTCAPTION, HTCLIENT, HWND_TOPMOST,
-    IDC_ARROW, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOW, WM_DESTROY, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP,
+    GetWindowRect, KillTimer, LoadCursorW, PostQuitMessage, RegisterClassExW, SetTimer,
+    SetWindowPos, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, HTCAPTION, HTCLIENT,
+    HWND_TOPMOST, IDC_ARROW, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOW, WM_DESTROY,
+    WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
+
+use crate::clip;
 
 const WIDTH: i32 = 400;
 const HEIGHT: i32 = 44;
@@ -35,10 +37,18 @@ const MARGIN_TOP: i32 = 60;
 const SMOKE_TIMER: usize = 0xA0;
 const HEARTBEAT: usize = 0xA1;
 const SAVETICK: usize = 0xA2;
+const FLASH: usize = 0xA3;
+/// 与 mac 侧 app.rs 的 ERROR_HOLD / FLASH_HOLD 同一口径
+const ERROR_HOLD_MS: u32 = 3000;
+const FLASH_HOLD_MS: u32 = 4000;
+/// 唯一不算错误的提示：设置保存成功。别的 flash 一律按错误染成 --warn
+const NOTICE: &str = "已保存";
 
 static MSGS: AtomicU32 = AtomicU32::new(0);
 thread_local! {
     static MOVED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static CLICKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static COPIED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// UI 线程状态。COM/GDI 句柄都不是 Send，只能待在 thread_local 里
@@ -48,6 +58,14 @@ struct Ui {
     painted: bool,
     /// 上次落盘的位置（DIP）；只在真的变了时才写文件
     saved: Option<(f64, f64)>,
+    /// 已取入的选区；直通模式复制回去的就是它的 text
+    selection: Option<capture::Selection>,
+    /// 未读复制（红点携带的信息），取入或自己写回后清掉
+    unread: Option<capture::ClipNote>,
+    /// 上次看到的剪贴板内容，用来判断"这是别人复制的"还是"我们自己的写回"
+    last_clip: String,
+    /// 一两秒后自动消失的错误提示；None 表示状态行回到正常的选区文案
+    error: Option<String>,
 }
 
 thread_local! {
@@ -56,6 +74,10 @@ thread_local! {
         layout: crate::paint::Layout::default(),
         painted: false,
         saved: None,
+        selection: None,
+        unread: None,
+        last_clip: String::new(),
+        error: None,
     });
 }
 
@@ -79,18 +101,13 @@ pub fn run() -> windows::core::Result<()> {
     unsafe { RegisterClassExW(&wndclass) };
 
     let work = unsafe { work_area() };
-    let ex_style = if env::var("SA_LAYERED").is_ok() {
-        WS_EX_LAYERED
-    } else if env::var("SA_OPAQUE").is_ok() {
-        WS_EX_TOOLWINDOW // 占位：等价于什么都不额外加
-    } else {
-        WS_EX_NOREDIRECTIONBITMAP
-    };
+    // 不加 WS_EX_NOREDIRECTIONBITMAP：那是给 D3D/合成器直呈准备的，GDI 画上去会因为没有
+    // 重定向表面而完全不可见（实测：窗口在、圆角在，内容全是桌面）。M0 用它做过材质实验，已收。
     let hwnd = unsafe {
         CreateWindowExW(
             // TOOLWINDOW ≈ 不进任务栏 / ⌘Tab（mac 侧的 Accessory 策略）
             // NOACTIVATE ≈ focusable:false：点它不把键盘焦点从源应用抢走
-            ex_style | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             class,
             w!("select-assist"),
             WS_POPUP,
@@ -141,6 +158,11 @@ pub fn run() -> windows::core::Result<()> {
         }
     }
 
+    if !clip::watch(hwnd) {
+        println!("剪贴板监听注册失败，未读点不会亮");
+    }
+    // 开机前就已经复制过的内容也要标成未读（mac 侧用不可能的 changeCount 达到同一效果）
+    on_clipboard_update(hwnd);
     unsafe { apply_saved_position(hwnd) };
     // 把当前落点当作基准存下来：只有跟它不同才是用户真的拖动过，避免每次开机白写一遍文件
     UI.with(|u| {
@@ -201,8 +223,7 @@ unsafe fn apply_saved_position(hwnd: HWND) {
         x: (x as f32 * scale) as i32,
         y: (y as f32 * scale) as i32,
     };
-    let mut info = MONITORINFO::default();
-    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    let mut info = monitor_info();
     if !GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mut info).as_bool() {
         return;
     }
@@ -223,6 +244,78 @@ fn store() -> settings::Settings {
         Ok(p) => settings::Settings::at(std::path::PathBuf::from(p)),
         Err(_) => settings::Settings::shared(),
     }
+}
+
+/// 取入选区：读剪贴板 → 存成选区 → 清未读点。空白剪贴板不算取入，只提示。
+fn capture_selection(hwnd: HWND) {
+    let text = clip::read_text().unwrap_or_default();
+    match capture::from_clipboard(&text, &clip::local_time()) {
+        Ok(selection) => {
+            UI.with(|u| {
+                let mut ui = u.borrow_mut();
+                ui.last_clip = text.clone();
+                ui.selection = Some(selection);
+                ui.unread = None;
+                ui.error = None;
+            });
+        }
+        Err(reason) => flash(hwnd, &reason),
+    }
+    let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
+}
+
+/// 直通复制：把选区原文逐字节写回剪贴板。mac 侧对应 app.rs 的 copy_payload，
+/// 那里的文案在这里原样沿用，两版不一致时一起改，别各写一份。
+fn copy_payload(hwnd: HWND) {
+    // 写回失败和没选区是同一件事：面板上还没有可复制的东西（mac 侧同一个分支同一个文案）
+    let Some(text) = UI.with(|u| u.borrow().selection.as_ref().map(|s| s.text.clone())) else {
+        flash(hwnd, "还没有取入选区");
+        return;
+    };
+    if !clip::write_text(&text) {
+        flash(hwnd, "还没有取入选区");
+        return;
+    }
+    // 自己写回的东西不能反过来点亮未读点（Electron 在 pack:copy 里同步 lastClip）
+    UI.with(|u| u.borrow_mut().last_clip = text);
+    let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
+}
+
+/// 别人复制的新内容才点亮未读点；自己写回的不算（mac 侧同理，靠同步 lastClip 实现）
+fn on_clipboard_update(hwnd: HWND) {
+    let Some(text) = clip::read_text() else {
+        return;
+    };
+    if text.trim().is_empty() {
+        return;
+    }
+    let changed = UI.with(|u| {
+        let mut ui = u.borrow_mut();
+        if ui.last_clip == text {
+            false
+        } else {
+            ui.last_clip = text.clone();
+            ui.unread = Some(capture::note_from(&text));
+            true
+        }
+    });
+    if changed {
+        let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
+    }
+}
+
+fn flash(hwnd: HWND, message: &str) {
+    let is_error = message != NOTICE;
+    UI.with(|u| u.borrow_mut().error = is_error.then(|| message.to_string()));
+    // 状态行只由 WM_PAINT 从 error / selection 推出来，这里只负责叫醒重画
+    let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
+    // 提示会自己收回，状态行回到选区文案（对应 mac 侧的 after(_:After::ClearFlash)）
+    let hold = if is_error {
+        ERROR_HOLD_MS
+    } else {
+        FLASH_HOLD_MS
+    };
+    let _ = unsafe { SetTimer(Some(hwnd), FLASH, hold, None) };
 }
 
 fn save_position_if_moved(hwnd: HWND) {
@@ -249,13 +342,20 @@ fn save_position_if_moved(hwnd: HWND) {
     }
 }
 
+/// GetMonitorInfoW 要求先填 cbSize，两处都要，单独收一下
+fn monitor_info() -> MONITORINFO {
+    MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    }
+}
+
 /// 工作区（扣掉任务栏）。取光标所在的那块屏，和 mac 侧 workArea 语义一致
 unsafe fn work_area() -> RECT {
     let mut cursor = POINT::default();
     GetCursorPos(&mut cursor).ok();
     let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
-    let mut info = MONITORINFO::default();
-    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    let mut info = monitor_info();
     if GetMonitorInfoW(monitor, &mut info).as_bool() {
         return info.rcWork;
     }
@@ -310,6 +410,18 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
         WM_PAINT => {
             let layout = UI.with(|u| {
                 let mut ui = u.borrow_mut();
+                // 状态行只有一个来源：有错误报错误，否则报选区（同 mac 的 refresh）
+                match ui.error.clone() {
+                    Some(message) => {
+                        ui.chip.status = message;
+                        ui.chip.status_err = true;
+                    }
+                    None => {
+                        ui.chip.status = capture::status_text(ui.selection.as_ref());
+                        ui.chip.status_err = false;
+                    }
+                }
+                ui.chip.badge = ui.unread.is_some();
                 let l = crate::paint::paint(hwnd, &ui.chip);
                 ui.layout = l;
                 ui.painted = true;
@@ -317,6 +429,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             });
             let _ = ValidateRect(Some(hwnd), None);
             let _ = layout;
+            LRESULT(0)
+        }
+        clip::UPDATED => {
+            on_clipboard_update(hwnd);
             LRESULT(0)
         }
         WM_SIZE => {
@@ -346,20 +462,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             LRESULT(if on_control { HTCLIENT } else { HTCAPTION } as isize)
         }
         WM_LBUTTONUP => {
-            match hit(hwnd, lparam_point(l)).map(String::from).as_deref() {
-                // M1 先证明命中模型通了：点按钮切换未读点与状态文字
-                Some("button") => UI.with(|u| {
-                    let mut ui = u.borrow_mut();
-                    ui.chip.badge = !ui.chip.badge;
-                    ui.chip.status = if ui.chip.badge {
-                        "已取入 12 字".into()
-                    } else {
-                        "还没有选区".into()
-                    };
-                }),
-                Some("dot") => UI.with(|u| {
-                    u.borrow_mut().chip.status = "展开面板（M4 接）".into();
-                }),
+            match hit(hwnd, lparam_point(l)) {
+                Some("button") => capture_selection(hwnd),
+                Some("dot") => flash(hwnd, "展开面板（M4 接）"),
                 _ => {}
             }
             let _ = InvalidateRect(Some(hwnd), None, false);
@@ -376,14 +481,32 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
                     let _ = DestroyWindow(hwnd);
                 }
                 HEARTBEAT => crate::webview::tick(hwnd),
+                FLASH => {
+                    UI.with(|u| u.borrow_mut().error = None);
+                    let _ = KillTimer(Some(hwnd), FLASH);
+                    let _ = InvalidateRect(Some(hwnd), None, false);
+                }
                 SAVETICK => {
                     save_position_if_moved(hwnd);
-                    // SA_MOVE=1：自己挪一下，用来验证「移动 -> 落盘 -> 重启恢复」这条链，
+                    // SA_MOVE / SA_CAPTURE：自己挪一下 / 自己取入一次，用来验证
+                    // 「移动 -> 落盘 -> 重启恢复」和「复制 -> 未读点 -> 取入 -> 状态行」这两条链，
                     // 不依赖合成鼠标事件（那玩意儿在这台机器上不可靠）
                     if env::var("SA_MOVE").is_ok() && !MOVED.with(|m| m.get()) {
                         MOVED.with(|m| m.set(true));
                         let _ =
                             SetWindowPos(hwnd, None, 120, 120, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+                    }
+                    // SA_COPY 隐含 SA_CAPTURE，但错开一轮触发：这样截图能把「已取入」和
+                    // 「写回后未读点仍然不亮」分成两帧看到
+                    let had_capture = CLICKED.with(|c| c.get());
+                    let wants_copy = env::var("SA_COPY").is_ok();
+                    if (env::var("SA_CAPTURE").is_ok() || wants_copy) && !had_capture {
+                        CLICKED.with(|c| c.set(true));
+                        capture_selection(hwnd);
+                    }
+                    if wants_copy && had_capture && !COPIED.with(|c| c.get()) {
+                        COPIED.with(|c| c.set(true));
+                        copy_payload(hwnd);
                     }
                 }
                 _ => {}

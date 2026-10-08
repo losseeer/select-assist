@@ -68,7 +68,7 @@ impl Chip {
         let status_x = PAD_X + ICON + GAP;
         let status = views::label(
             mtm,
-            crate::capture::NO_SELECTION,
+            capture::NO_SELECTION,
             T_BODY,
             &views::dim(),
             views::rect(

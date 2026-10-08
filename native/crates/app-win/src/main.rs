@@ -5,6 +5,8 @@
 //! 非 Windows 平台上这个 crate 编成空 main，保证 Mac 上的 `cargo test` 不会多一个编不过的目标。
 
 #[cfg(windows)]
+mod clip;
+#[cfg(windows)]
 mod paint;
 #[cfg(windows)]
 mod shell;

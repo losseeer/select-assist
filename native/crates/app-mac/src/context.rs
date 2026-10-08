@@ -253,7 +253,7 @@ pub struct Payload {
 /// 面板持有的那「一包」：选区 + 可选的会话上下文
 #[derive(Clone, Debug, Default)]
 pub struct Pack {
-    pub selection: Option<crate::capture::Selection>,
+    pub selection: Option<capture::Selection>,
     pub capture_at: String,
     pub transcript: Vec<TranscriptTurn>,
     pub defaults: Vec<String>,
@@ -262,7 +262,7 @@ pub struct Pack {
 }
 
 impl Pack {
-    pub fn set_selection(&mut self, selection: crate::capture::Selection) {
+    pub fn set_selection(&mut self, selection: capture::Selection) {
         self.capture_at = selection.at.clone();
         self.selection = Some(selection);
         self.transcript.clear();
@@ -275,8 +275,8 @@ impl Pack {
     pub fn status_line(&self) -> (String, String) {
         let selection = self.selection.as_ref();
         (
-            crate::capture::status_text(selection),
-            crate::capture::status_tip(selection),
+            capture::status_text(selection),
+            capture::status_tip(selection),
         )
     }
 
@@ -287,11 +287,7 @@ impl Pack {
         }
         let context = &self.context;
         if context.agent.is_none() && context.error.is_none() {
-            return (
-                crate::capture::CONTEXT_EMPTY.to_string(),
-                String::new(),
-                false,
-            );
+            return (capture::CONTEXT_EMPTY.to_string(), String::new(), false);
         }
         if let Some(error) = context.error.as_deref() {
             return (format!("上下文：{error}"), String::new(), true);
@@ -653,8 +649,8 @@ mod tests {
     }
 
     /// 测试里造选区：走一遍真实的 from_clipboard，字段口径与 UI 取入时一致
-    fn sel(text: &str, at: &str) -> crate::capture::Selection {
-        crate::capture::from_clipboard(text, at).unwrap()
+    fn sel(text: &str, at: &str) -> capture::Selection {
+        capture::from_clipboard(text, at).unwrap()
     }
 
     #[test]
