@@ -44,6 +44,11 @@ fn new_edit(panel: HWND) -> HWND {
             WC_EDITW,
             w!(""),
             // 多行 + 自己吃回车：少了 ES_WANTRETURN，回车会被当成"下一个控件"而不是换行
+            //
+            // WS_TABSTOP 在这里只是给控件登记一个 tab 顺序，**Tab 并不会跳焦点**：
+            // 消息循环没跑 IsDialogMessage，VK_TAB 到不了对话框管理器，多行 EDIT 于是
+            // 插一个制表符进去。mac 的 NSTextView 不设 nextKeyView 时行为一样，所以先保持
+            // 一致；要改就得两版一起改（Electron 的 textarea 是跳焦点的，三版里只有它跳）。
             WINDOW_STYLE(
                 WS_CHILD.0
                     | WS_VISIBLE.0

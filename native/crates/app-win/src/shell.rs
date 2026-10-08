@@ -256,8 +256,10 @@ pub fn run() -> windows::core::Result<()> {
 }
 
 /* ---------- 冒烟探针：只在 debug 构建里存在 ----------
-这台机器上合成鼠标事件不可靠（点不到 / 落点飘），所以"移动 -> 落盘 -> 重启恢复"
-"复制 -> 未读点 -> 取入 -> 状态行"这几条链改成让程序自己触发。
+"移动 -> 落盘 -> 重启恢复""复制 -> 未读点 -> 取入 -> 状态行"这几条链改成让程序
+自己触发，这样锁屏、没有交互桌面的时候也能跑。真实输入那条路本身是通的：早先记的
+"本机合成鼠标不可靠（点不到/落点飘）"其实是 scripts/input.ps1 漏了
+MOUSEEVENTF_ABSOLUTE，落点全被钉在屏幕角上，探针因此一度看起来是唯一选项。
 release 产物里这些代码整个不参与编译：能拿环境变量驱动真实状态机的 exe 不该发出去。 */
 
 #[cfg(debug_assertions)]
@@ -586,7 +588,10 @@ fn panel_view(ui: &Ui) -> panel::PanelView {
         settings_open: ui.settings_open,
         dirty: ui.dirty,
         redact: ui.settings.redact_paths,
-        prompt_index: ui.settings.active_prompt,
+        // 这个下标标的是"框里正在编辑哪一条"，所以必须跟 draft_prompt 走：
+        // 写 active_prompt 的话，上面那个下拉一切换，设置组就改成"指令 3 / 共 3 条"，
+        // 而框里仍然是指令 1 的模板，保存进的是指令 1 —— 标签在骗人
+        prompt_index: ui.draft_prompt,
         prompt_count: ui.settings.prompts.len(),
         sites_label: if ui.settings.with_context {
             "会话解读目标站".into()
@@ -1551,6 +1556,24 @@ mod tests {
             assert_eq!(u.settings.active_prompt, 0, "没保存就不该改到生效中的那条");
             assert!(u.dirty);
             assert!(!apply_pick(u, "prompt-pick", 9));
+        });
+    }
+
+    /// 设置组里"指令 N ▾"和"N / 共 M 条"标的是草稿指向的那条，不是生效中的那条。
+    /// mac 的 reload_prompt_editor 用 edit_index 同时喂标签和编辑框，这边也必须同源，
+    /// 否则上面那个下拉一切换，标签说在编辑指令 3、框里还是指令 1、保存写回指令 1。
+    #[test]
+    fn the_settings_group_labels_the_draft_it_edits() {
+        with_ui(|u| {
+            u.settings.prompts.push(settings::PromptTemplate {
+                name: "另一条".into(),
+                template: "{selection}!".into(),
+            });
+            u.settings.active_prompt = 1;
+            u.draft_prompt = 0;
+            assert_eq!(panel_view(u).prompt_index, 0);
+            u.draft_prompt = 1;
+            assert_eq!(panel_view(u).prompt_index, 1);
         });
     }
 
