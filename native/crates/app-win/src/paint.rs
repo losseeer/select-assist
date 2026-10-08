@@ -45,8 +45,8 @@ pub struct Layout {
     pub dot: RectF,
 }
 
-fn layout(hdc: HDC, chip: &Chip, s: f32, h: f32) -> Layout {
-    let btn_w = draw::measure(hdc, &chip.button, T_BODY, s) + 24.0; // CSS 的 padding: 4px 12px
+fn layout(hdc: HDC, hwnd: HWND, chip: &Chip, h: f32) -> Layout {
+    let btn_w = draw::measure(hdc, hwnd, &chip.button, T_BODY) + 24.0; // CSS 的 padding: 4px 12px
     let top = (h - CTRL_H) / 2.0;
     let btn_left = WIDTH - PAD_X - btn_w;
     Layout {
@@ -72,7 +72,7 @@ pub fn paint(hwnd: HWND, chip: &Chip) -> Layout {
         let old = SelectObject(mem, bmp.into());
         draw::select_font(mem, hwnd, T_BODY);
 
-        let l = layout(mem, chip, s, dh);
+        let l = layout(mem, hwnd, chip, dh);
         draw::fill(mem, rc, CARD);
 
         // ▸ 带底槽（mac 的 socket_button）：光一个字形读起来不像控件

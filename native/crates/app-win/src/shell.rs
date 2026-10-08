@@ -8,8 +8,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
-    DwmSetWindowAttribute, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE,
-    DWM_SYSTEMBACKDROP_TYPE, DWM_WINDOW_CORNER_PREFERENCE,
+    DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWM_WINDOW_CORNER_PREFERENCE,
 };
 use windows::Win32::Graphics::Gdi::{
     ClientToScreen, GetMonitorInfoW, InvalidateRect, MonitorFromPoint, ValidateRect, MONITORINFO,
@@ -25,10 +24,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     DestroyWindow, DispatchMessageW, GetClientRect, GetCursorPos, GetMessageW, GetWindowRect,
     KillTimer, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassExW, SetForegroundWindow,
     SetTimer, SetWindowPos, ShowWindow, TrackPopupMenu, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
-    HTCAPTION, HTCLIENT, HWND_TOPMOST, IDC_ARROW, MF_BYCOMMAND, MF_CHECKED, MF_STRING, MSG,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNORMAL,
-    TPM_BOTTOMALIGN, TPM_LEFTBUTTON, TPM_RETURNCMD, WM_CTLCOLOREDIT, WM_DESTROY, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WM_NCHITTEST, WM_NULL, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW,
+    EN_CHANGE, HTCAPTION, HTCLIENT, HWND_TOPMOST, IDC_ARROW, MF_BYCOMMAND, MF_CHECKED, MF_STRING,
+    MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNORMAL,
+    TPM_BOTTOMALIGN, TPM_LEFTBUTTON, TPM_RETURNCMD, WM_COMMAND, WM_CTLCOLOREDIT, WM_DESTROY,
+    WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST, WM_NULL, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
@@ -87,6 +86,8 @@ struct Ui {
     last_clip: String,
     /// 一两秒后自动消失的错误提示；None 表示状态行回到正常的选区文案
     error: Option<String>,
+    /// 非错误的即时提示（「已保存」），显示在面板的上下文状态位上，同样会自己收回
+    notice: Option<String>,
     // ---- 面板（M4）。HWND 为 0 表示没开 ----
     panel: HWND,
     panel_layout: panel::Layout,
@@ -123,6 +124,7 @@ thread_local! {
         unread: None,
         last_clip: String::new(),
         error: None,
+        notice: None,
         panel: HWND::default(),
         panel_layout: panel::Layout::default(),
         agent: "auto".into(),
@@ -231,9 +233,7 @@ pub fn run() -> windows::core::Result<()> {
     // 位置落盘：WS_EX_NOACTIVATE 的窗口收不到 WM_EXITSIZEMOVE（实测），
     // 所以用 1 秒一次的比较式轮询，只在真的移动过才写
     let _ = unsafe { SetTimer(Some(hwnd), SAVETICK, 1000, None) };
-    if let Some(ms) = env::var("SA_SMOKE_MS").ok().and_then(|v| v.parse().ok()) {
-        let _ = unsafe { SetTimer(Some(hwnd), SMOKE_TIMER, ms, None) };
-    }
+    unsafe { probe_start(hwnd) };
     unsafe { report(hwnd) };
 
     let mut msg = MSG::default();
@@ -244,8 +244,52 @@ pub fn run() -> windows::core::Result<()> {
     Ok(())
 }
 
-/// SA_BACKDROP=acrylic|mica 控制，用来在原生窗口上复现「DWM 材质 + 44 高」会发生什么。
-/// 圆角始终打开：卡片本身就是窗口，交给 DWM 裁比自绘抗锯齿省事。
+/* ---------- 冒烟探针：只在 debug 构建里存在 ----------
+这台机器上合成鼠标事件不可靠（点不到 / 落点飘），所以"移动 -> 落盘 -> 重启恢复"
+"复制 -> 未读点 -> 取入 -> 状态行"这几条链改成让程序自己触发。
+release 产物里这些代码整个不参与编译：能拿环境变量驱动真实状态机的 exe 不该发出去。 */
+
+#[cfg(debug_assertions)]
+unsafe fn probe_start(hwnd: HWND) {
+    if let Some(ms) = env::var("SA_SMOKE_MS").ok().and_then(|v| v.parse().ok()) {
+        let _ = SetTimer(Some(hwnd), SMOKE_TIMER, ms, None);
+    }
+}
+
+#[cfg(debug_assertions)]
+unsafe fn probe(hwnd: HWND) {
+    if env::var("SA_MOVE").is_ok() && !MOVED.with(|m| m.get()) {
+        MOVED.with(|m| m.set(true));
+        let _ = SetWindowPos(hwnd, None, 120, 120, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+    // SA_COPY 隐含 SA_CAPTURE，但错开一轮：截图才能把「已取入」和
+    // 「写回后未读点仍然不亮」分成两帧看到
+    let had_capture = CLICKED.with(|c| c.get());
+    let wants_copy = env::var("SA_COPY").is_ok();
+    if (env::var("SA_CAPTURE").is_ok() || wants_copy) && !had_capture {
+        CLICKED.with(|c| c.set(true));
+        capture_selection(hwnd);
+    }
+    if env::var("SA_PANEL").is_ok() && !PANELD.with(|c| c.get()) {
+        PANELD.with(|c| c.set(true));
+        open_panel(hwnd);
+    }
+    if wants_copy && had_capture && !COPIED.with(|c| c.get()) {
+        COPIED.with(|c| c.set(true));
+        copy_payload(hwnd);
+    }
+}
+
+#[cfg(not(debug_assertions))]
+unsafe fn probe_start(_hwnd: HWND) {}
+
+#[cfg(not(debug_assertions))]
+unsafe fn probe(_hwnd: HWND) {}
+
+/// 圆角交给 DWM：卡片本身就是窗口，让系统裁比自绘抗锯齿省事，也不会出现
+/// "圆角外一圈方角"那种只有截屏才看得出的错。
+/// 材质（acrylic/mica）刻意不挂：M0 量过，原生窗口挂不挂材质都是精确 400x44，
+/// 那个 64 物理像素下限是 Chromium 透明窗口自己的事，我们不需要为它让路。
 unsafe fn apply_material(hwnd: HWND) {
     let corner = DWM_WINDOW_CORNER_PREFERENCE(2); // DWMWCP_ROUND
     let _ = DwmSetWindowAttribute(
@@ -253,17 +297,6 @@ unsafe fn apply_material(hwnd: HWND) {
         DWMWA_WINDOW_CORNER_PREFERENCE,
         &corner as *const _ as *const _,
         std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
-    );
-    let backdrop = match env::var("SA_BACKDROP").unwrap_or_default().as_str() {
-        "acrylic" => DWM_SYSTEMBACKDROP_TYPE(3),
-        "mica" => DWM_SYSTEMBACKDROP_TYPE(2),
-        _ => return,
-    };
-    let _ = DwmSetWindowAttribute(
-        hwnd,
-        DWMWA_SYSTEMBACKDROP_TYPE,
-        &backdrop as *const _ as *const _,
-        std::mem::size_of::<DWM_SYSTEMBACKDROP_TYPE>() as u32,
     );
 }
 
@@ -379,7 +412,14 @@ fn on_clipboard_update(hwnd: HWND) {
 
 fn flash(hwnd: HWND, message: &str) {
     let is_error = message != NOTICE;
-    UI.with(|u| u.borrow_mut().error = is_error.then(|| message.to_string()));
+    UI.with(|u| {
+        let mut ui = u.borrow_mut();
+        ui.error = is_error.then(|| message.to_string());
+        // 「已保存」这类提示不是错误，不进状态行，走面板的上下文状态位（同 mac 的 set_ctx_status）
+        if !is_error {
+            ui.notice = Some(message.to_string());
+        }
+    });
     // 状态行只由 WM_PAINT 从 error / selection 推出来，这里只负责叫醒重画
     let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
     // 提示会自己收回，状态行回到选区文案（对应 mac 侧的 after(_:After::ClearFlash)）
@@ -492,13 +532,8 @@ fn panel_view(ui: &Ui) -> panel::PanelView {
     } else {
         &ui.settings.direct_sites
     };
-    let pack_meta = ui.payload.as_ref().map_or_else(String::new, |p| {
-        if p.dropped.is_empty() {
-            format!("组装后 {} 字", p.used_chars)
-        } else {
-            format!("组装后 {} 字 · 丢了 {}", p.used_chars, p.dropped.join("、"))
-        }
-    });
+    // 文案由 pack 决定：直通说「选区原文」，会话解读才说「组装后」，这边不重写一遍
+    let pack_meta = ui.payload.as_ref().map_or_else(String::new, |p| p.meta().0);
     let view = panel::PanelView {
         status,
         status_err,
@@ -507,7 +542,7 @@ fn panel_view(ui: &Ui) -> panel::PanelView {
         turns: ui.settings.context_turns,
         session_line,
         session_err,
-        ctx_status: String::new(),
+        ctx_status: ui.notice.clone().unwrap_or_default(),
         ctx_err: false,
         browsing: ui.browsing,
         browser_rows: ui.browser_rows.clone(),
@@ -578,6 +613,10 @@ unsafe fn close_panel() {
         let mut ui = u.borrow_mut();
         ui.panel = HWND::default();
         ui.panel_layout = panel::Layout::default();
+        // 「已复制 ✓」的收回定时器挂在面板上，窗口一没就没人收，重开就是永久的高亮
+        ui.copied = false;
+        ui.panel_hover = None;
+        ui.panel_row = None;
     });
 }
 
@@ -598,7 +637,7 @@ unsafe fn panel_action(chip: HWND, id: &'static str, row: Option<usize>) {
         "capture" => capture_selection(chip),
         "mode-off" => set_mode(chip, !UI.with(|u| u.borrow().settings.with_context)),
         "browse" => browse_sessions(),
-        "refresh" => browse_sessions(),
+        "refresh" => refresh_context(),
         "browser" => pick_session(row),
         "copy" => copy_payload(chip),
         "agent" | "turns" | "prompt" => pick_menu(id),
@@ -613,20 +652,66 @@ unsafe fn panel_action(chip: HWND, id: &'static str, row: Option<usize>) {
     }
 }
 
-/// 换模式：写回设置、重算 payload，直通模式要把上下文剥掉
+/// 换模式。语义照 mac 的 set_mode：离开会话解读必须先把上下文清掉，
+/// 否则"直通"复制出去的仍然是组装后的 Prompt —— pack 里有这条测试，壳里也得这么做。
 fn set_mode(chip: HWND, read: bool) {
-    UI.with(|u| u.borrow_mut().settings.with_context = read);
+    if !UI.with(|u| apply_mode(&mut u.borrow_mut(), read)) {
+        return;
+    }
+    let settings = UI.with(|u| u.borrow().settings.clone());
     if read {
-        UI.with(|u| {
-            let mut ui = u.borrow_mut();
-            let settings = ui.settings.clone();
-            let turns = settings.context_turns;
-            let agent = ui.agent.clone();
-            ui.pack.attach(&settings, &agent, turns, None, None);
-            ui.payload = ui.pack.payload(&settings);
-        });
+        attach_current(&settings);
+    } else {
+        recompute_payload(&settings);
+    }
+    // 模式是两版共用的设置，切完就落盘：不写回去，重启就回到旧模式，Electron 那边也看不到
+    if let Err(e) = store().save(&settings) {
+        println!("写模式失败: {e}");
     }
     repaint(chip);
+}
+
+/// 换模式的纯状态部分：返回 false 表示模式没变，调用方什么都不该做。
+/// 离开会话解读一定要把上下文清掉 —— 不清的话"直通"复制出去的仍然是组装后的 Prompt，
+/// pack 里有这条测试，壳里也必须这么做，所以单独拆出来给测试盯住。
+fn apply_mode(ui: &mut Ui, read: bool) -> bool {
+    if ui.settings.with_context == read {
+        return false;
+    }
+    ui.settings.with_context = read;
+    if !read {
+        ui.browsing = false;
+        ui.browser_sel = None;
+        ui.pack.clear_context();
+    }
+    true
+}
+
+/// 用当前 agent、以及会话浏览器里挑中的那一条，去挂上下文并重算 payload
+fn attach_current(settings: &settings::AppSettings) {
+    let agent = UI.with(|u| u.borrow().agent.clone());
+    let picked = UI.with(|u| {
+        let ui = u.borrow();
+        ui.browser_sel.and_then(|i| ui.browser_refs.get(i)).cloned()
+    });
+    UI.with(|u| {
+        let mut ui = u.borrow_mut();
+        ui.pack.attach(
+            settings,
+            &agent,
+            settings.context_turns,
+            picked.as_ref().map(|r| r.file_path.as_str()),
+            picked.as_ref().and_then(|r| r.session_id.as_deref()),
+        );
+        ui.payload = ui.pack.payload(settings);
+    });
+}
+
+fn recompute_payload(settings: &settings::AppSettings) {
+    UI.with(|u| {
+        let mut ui = u.borrow_mut();
+        ui.payload = ui.pack.payload(settings);
+    });
 }
 
 fn repaint(chip: HWND) {
@@ -636,6 +721,17 @@ fn repaint(chip: HWND) {
             let _ = InvalidateRect(Some(panel), None, false);
         }
         let _ = InvalidateRect(Some(chip), None, false);
+    }
+}
+
+/// 刷新 = 按当前 agent / 已挑的会话重新挂一次上下文（mac 的 attach(None)）。
+/// 它刻意不重新发现：重新发现会把用户挑中的那一行冲掉。
+fn refresh_context() {
+    let settings = UI.with(|u| u.borrow().settings.clone());
+    if settings.with_context {
+        attach_current(&settings);
+    } else {
+        recompute_payload(&settings);
     }
 }
 
@@ -710,35 +806,38 @@ const TURNS: [(&str, usize); 5] = [
 ];
 
 /// 某个下拉的候选文字 + 当前选中的下标
-fn menu_for(ui: &Ui, id: &'static str) -> (Vec<String>, usize) {
+fn menu_for(ui: &Ui, id: &'static str) -> Option<(Vec<String>, usize)> {
     match id {
         "agent" => {
             let current = AGENTS.iter().position(|a| *a == ui.agent).unwrap_or(0);
-            (AGENTS.iter().map(|a| a.to_string()).collect(), current)
+            Some((AGENTS.iter().map(|a| a.to_string()).collect(), current))
         }
         "turns" => {
             let current = TURNS
                 .iter()
                 .position(|(_, t)| *t == ui.settings.context_turns)
                 .unwrap_or(1);
-            (TURNS.iter().map(|(l, _)| l.to_string()).collect(), current)
+            Some((TURNS.iter().map(|(l, _)| l.to_string()).collect(), current))
         }
-        // 设置组里的指令选择器：选的是"草稿里第几条"，跟输出组那个"生效中"的下标不是一回事
-        "prompt-pick" => {
-            let current = ui
-                .draft_prompt
-                .min(ui.settings.prompts.len().saturating_sub(1));
-            let names: Vec<String> = ui.settings.prompts.iter().map(|p| p.name.clone()).collect();
-            (names, current)
-        }
-        _ => {
+        // 输出组那个下拉选"生效中"的一条
+        "prompt" => {
             let current = ui
                 .settings
                 .active_prompt
                 .min(ui.settings.prompts.len().saturating_sub(1));
             let names: Vec<String> = ui.settings.prompts.iter().map(|p| p.name.clone()).collect();
-            (names, current)
+            Some((names, current))
         }
+        // 设置组里的选择器选的是"草稿里第几条"，跟上面那个不是一回事
+        "prompt-pick" => {
+            let current = ui
+                .draft_prompt
+                .min(ui.settings.prompts.len().saturating_sub(1));
+            let names: Vec<String> = ui.settings.prompts.iter().map(|p| p.name.clone()).collect();
+            Some((names, current))
+        }
+        // 没有兜底：命中表里新加一个 id 而忘了在这里加分支，编译期就要说清楚
+        _ => None,
     }
 }
 
@@ -795,7 +894,9 @@ unsafe fn pick_menu(id: &'static str) {
     if panel.0.is_null() {
         return;
     }
-    let (items, current) = UI.with(|u| menu_for(&u.borrow(), id));
+    let Some((items, current)) = UI.with(|u| menu_for(&u.borrow(), id)) else {
+        return;
+    };
     let menu = match CreatePopupMenu() {
         Ok(m) => m,
         Err(_) => return,
@@ -952,6 +1053,18 @@ unsafe extern "system" fn panel_wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPAR
             }
             LRESULT(0)
         }
+        WM_COMMAND => {
+            // 子控件把通知码放在 wParam 高 16 位，lParam 是它自己
+            let code = ((w.0 >> 16) & 0xFFFF) as u32;
+            if code == EN_CHANGE {
+                let child = HWND(l.0 as *mut _);
+                if edits::owns(child) {
+                    UI.with(|u| u.borrow_mut().dirty = true);
+                    let _ = InvalidateRect(Some(hwnd), None, false);
+                }
+            }
+            LRESULT(0)
+        }
         WM_CTLCOLOREDIT => {
             let hdc = windows::Win32::Graphics::Gdi::HDC(w.0 as *mut _);
             let brush = unsafe { edits::color_field(hdc, theme::FIELD, theme::INK) };
@@ -1058,36 +1171,17 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
                     let _ = DestroyWindow(hwnd);
                 }
                 FLASH => {
-                    UI.with(|u| u.borrow_mut().error = None);
+                    UI.with(|u| {
+                        let mut ui = u.borrow_mut();
+                        ui.error = None;
+                        ui.notice = None;
+                    });
                     let _ = KillTimer(Some(hwnd), FLASH);
                     let _ = InvalidateRect(Some(hwnd), None, false);
                 }
                 SAVETICK => {
                     save_position_if_moved(hwnd);
-                    // SA_MOVE / SA_CAPTURE：自己挪一下 / 自己取入一次，用来验证
-                    // 「移动 -> 落盘 -> 重启恢复」和「复制 -> 未读点 -> 取入 -> 状态行」这两条链，
-                    // 不依赖合成鼠标事件（那玩意儿在这台机器上不可靠）
-                    if env::var("SA_MOVE").is_ok() && !MOVED.with(|m| m.get()) {
-                        MOVED.with(|m| m.set(true));
-                        let _ =
-                            SetWindowPos(hwnd, None, 120, 120, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
-                    }
-                    // SA_COPY 隐含 SA_CAPTURE，但错开一轮触发：这样截图能把「已取入」和
-                    // 「写回后未读点仍然不亮」分成两帧看到
-                    let had_capture = CLICKED.with(|c| c.get());
-                    let wants_copy = env::var("SA_COPY").is_ok();
-                    if (env::var("SA_CAPTURE").is_ok() || wants_copy) && !had_capture {
-                        CLICKED.with(|c| c.set(true));
-                        capture_selection(hwnd);
-                    }
-                    if env::var("SA_PANEL").is_ok() && !PANELD.with(|c| c.get()) {
-                        PANELD.with(|c| c.set(true));
-                        open_panel(hwnd);
-                    }
-                    if wants_copy && had_capture && !COPIED.with(|c| c.get()) {
-                        COPIED.with(|c| c.set(true));
-                        copy_payload(hwnd);
-                    }
+                    unsafe { probe(hwnd) };
                 }
                 _ => {}
             }
@@ -1168,11 +1262,17 @@ impl Ui {
 }
 
 unsafe fn toggle_redact(chip: HWND) {
-    UI.with(|u| {
+    let settings = UI.with(|u| {
         let mut ui = u.borrow_mut();
         ui.settings.redact_paths = !ui.settings.redact_paths;
         ui.dirty = true;
+        ui.settings.clone()
     });
+    if settings.with_context {
+        attach_current(&settings);
+    } else {
+        recompute_payload(&settings);
+    }
     repaint(chip);
 }
 
@@ -1241,6 +1341,12 @@ unsafe fn save_settings(chip: HWND) {
         flash(chip, "写设置失败");
         return;
     }
+    let now = UI.with(|u| u.borrow().settings.clone());
+    if now.with_context {
+        attach_current(&now);
+    } else {
+        recompute_payload(&now);
+    }
     let mut warn = Vec::new();
     if !bad_sites.is_empty() {
         warn.push(format!("站点第 {} 行", join_rows(&bad_sites)));
@@ -1277,7 +1383,7 @@ mod tests {
     fn turns_menu_maps_back_to_the_setting() {
         with_ui(|u| {
             u.settings.context_turns = 16;
-            let (items, current) = menu_for(u, "turns");
+            let (items, current) = menu_for(u, "turns").unwrap();
             assert_eq!(items.len(), TURNS.len());
             assert_eq!(items[current], "16 轮");
             assert!(apply_pick(u, "turns", 4));
@@ -1289,7 +1395,7 @@ mod tests {
     #[test]
     fn agent_menu_defaults_to_auto() {
         with_ui(|u| {
-            let (items, current) = menu_for(u, "agent");
+            let (items, current) = menu_for(u, "agent").unwrap();
             assert_eq!(items[current], "auto");
             assert!(apply_pick(u, "agent", 2));
             assert_eq!(u.agent, "codex");
@@ -1297,6 +1403,20 @@ mod tests {
     }
 
     /// 没有选区时 apply_pick 只改状态，绝不去读磁盘上的会话
+    /// 切到直通必须清掉上下文：否则"直通"复制出去的还是组装后的整段 Prompt
+    #[test]
+    fn leaving_read_mode_clears_the_context() {
+        with_ui(|u| {
+            u.settings.with_context = true;
+            u.browsing = true;
+            u.browser_sel = Some(0);
+            assert!(apply_mode(u, false));
+            assert!(!u.browsing && u.browser_sel.is_none());
+            assert!(u.pack.context.agent.is_none() && u.pack.transcript.is_empty());
+            assert!(!apply_mode(u, false), "同一个模式再点一次不该重做任何事");
+        });
+    }
+
     /// 设置组的指令选择器只动草稿，不碰已生效的那条，也不落盘
     #[test]
     fn prompt_pick_moves_the_draft_not_the_active_one() {

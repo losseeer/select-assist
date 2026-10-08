@@ -68,10 +68,14 @@ fn new_edit(panel: HWND) -> HWND {
 /// 建三个 EDIT、换上我们的字体、并关掉视觉样式。
 /// 不关视觉样式的话 EDIT 会自己画白底 —— 我们返回的深色画刷只染文字周围那一圈。
 pub unsafe fn create(panel: HWND, field_bg: COLORREF) {
-    if BRUSH.with(|b| !b.get().0.is_null()) {
+    // 看 EDIT 而不是看画刷：面板 WM_DESTROY 把两者一起放掉了，只重建一半的话
+    // "重开面板 -> 设置组是空的"，要点两次设置才出来
+    if !EDITS.with(|e| e.borrow()[0].0.is_null()) {
         return;
     }
-    BRUSH.with(|b| b.set(CreateSolidBrush(field_bg)));
+    if BRUSH.with(|b| b.get().0.is_null()) {
+        BRUSH.with(|b| b.set(CreateSolidBrush(field_bg)));
+    }
     let edits = [new_edit(panel), new_edit(panel), new_edit(panel)];
     for h in edits {
         if h.0.is_null() {
@@ -137,6 +141,11 @@ pub unsafe fn place(rects: [Option<RectF>; COUNT]) {
             }
         }
     }
+}
+
+/// 这条通知是不是我们那三个框发出来的（WM_COMMAND 的 lParam 带子窗口句柄）
+pub fn owns(hwnd: HWND) -> bool {
+    EDITS.with(|e| e.borrow().contains(&hwnd))
 }
 
 pub fn set(index: usize, text: &str) {

@@ -104,12 +104,14 @@ pub fn select_font(hdc: HDC, hwnd: HWND, pt: f32) {
     }
 }
 
-/// 文本宽度（DIP）。选中的字体已经按 DPI 放大，所以量出来的是物理像素，再除回去。
-/// 字体没选对时结果也错 —— 调用前必须 select_font 同一个 pt。
-pub fn measure(hdc: HDC, s: &str, pt: f32, scale: f32) -> f32 {
+/// 按 pt 量文本宽度（DIP）。字体在这里自己选：调用点往往刚画完一行 11pt 的次要文字，
+/// 沿用 DC 里残留的字体就会"按 11pt 量、按 12pt 画"，按钮比自己的文字窄。
+pub fn measure(hdc: HDC, hwnd: HWND, s: &str, pt: f32) -> f32 {
     if s.is_empty() {
         return 0.0;
     }
+    let scale = scale(hwnd);
+    select_font(hdc, hwnd, pt);
     let u: Vec<u16> = s.encode_utf16().collect();
     let mut sz = SIZE::default();
     unsafe {

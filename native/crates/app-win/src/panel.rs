@@ -16,8 +16,8 @@ use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
 use crate::draw::{self, RectF};
 use crate::theme::{
-    ACCENT, ACCENT_HOVER, ACCENT_SOFT, BROWSE_ROW, CARD, CTRL_H, DANGER, DANGER_HOT, DIM, DOT,
-    FAINT, FIELD, FIELD_H, FILL, GAP, HAIRLINE, ICON, INK, LINE_H, PAD_BOTTOM, PAD_TOP, PAD_X,
+    ACCENT, ACCENT_HOVER, ACCENT_SOFT, BROWSE_ROW, CTRL_H, DANGER, DANGER_HOT, DIM, DOT, FAINT,
+    FIELD, FIELD_H, FILL, GAP, HAIRLINE, ICON, INK, LINE_H, PAD_BOTTOM, PAD_TOP, PAD_X, PANEL,
     ROW_GAP, R_CTRL, R_FIELD, S1, S2, SESSIONS_H, TRACK, T_BODY, T_HEAD, T_META, WARN, WHITE,
     WIDTH,
 };
@@ -116,7 +116,7 @@ impl Pen {
 
     /// 控件宽度：文字实测 + CSS 的 padding 4px 12px
     fn pill_width(&self, text: &str) -> f32 {
-        draw::measure(self.hdc, text, T_BODY, self.s) + 24.0
+        draw::measure(self.hdc, self.hwnd, text, T_BODY) + 24.0
     }
 
     /// 主色胶囊（取入选区 / 复制）。`from_right` 时 x 给的是右边界；返回宽度，
@@ -592,7 +592,7 @@ pub fn paint(hwnd: HWND, v: &PanelView) -> Layout {
         let old = SelectObject(mem, bmp.into());
         p.hdc = mem;
         draw::select_font(mem, hwnd, T_BODY);
-        draw::fill(mem, rc, CARD);
+        draw::fill(mem, rc, PANEL);
 
         let mut y = PAD_TOP;
         y = head(&mut p, v, y) + GAP;
