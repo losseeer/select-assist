@@ -10,13 +10,12 @@ use std::cell::OnceCell;
 use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, HWND, RECT, SIZE};
 use windows::Win32::Graphics::Gdi::{
-    BitBlt, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, CreateCompatibleBitmap, CreateCompatibleDC,
-    CreateEllipticRgn, CreateFontW, CreateRoundRectRgn, CreateSolidBrush, DEFAULT_CHARSET,
-    DRAW_TEXT_FORMAT, DT_CENTER, DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER,
-    DeleteDC, DeleteObject, DrawTextW, FillRect, FillRgn, FW_NORMAL, GetDC,
-    GetTextExtentPoint32W, HFONT,
-    HDC, OUT_DEFAULT_PRECIS, ReleaseDC, SRCCOPY, SelectObject, SetBkMode, SetTextColor,
-    TRANSPARENT,
+    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateEllipticRgn, CreateFontW,
+    CreateRoundRectRgn, CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, FillRect, FillRgn,
+    GetDC, GetTextExtentPoint32W, ReleaseDC, SelectObject, SetBkMode, SetTextColor,
+    CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DRAW_TEXT_FORMAT, DT_CENTER,
+    DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, FW_NORMAL, HDC, HFONT,
+    OUT_DEFAULT_PRECIS, SRCCOPY, TRANSPARENT,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::GetClientRect;

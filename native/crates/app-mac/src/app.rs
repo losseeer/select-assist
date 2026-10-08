@@ -19,9 +19,9 @@ use crate::context::{self, Pack, Payload};
 use crate::geo::{Geometry, Rect};
 use crate::panel::{Panel, Row};
 use crate::pasteboard;
-use settings::{AppSettings, PromptTemplate, SessionPath, Settings, SiteTarget};
 use crate::views;
 use ctxpack::adapters::SessionRef;
+use settings::{AppSettings, PromptTemplate, SessionPath, Settings, SiteTarget};
 
 /// Electron 的轮询周期
 const POLL_SECONDS: f64 = 0.8;

@@ -13,9 +13,9 @@ case "${1:-}" in
 esac
 
 if [[ $profile == release ]]; then
-  cargo build --release
+  cargo build --release -p select-assist-native
 else
-  cargo build
+  cargo build -p select-assist-native
 fi
 
 version=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' crates/app-mac/Cargo.toml | head -1)

@@ -5,7 +5,9 @@ edition = "2021"
 publish = false
 
 [[bin]]
-name = "select-assist-native"
+# 不能跟 app-mac 的包名同名：两个 bin 会抢 target/<profile>/select-assist-native，
+# 谁后链谁赢 —— 在 mac 上 app-win 只是个空 main，抢到了就产出一个签名有效的空壳包
+name = "select-assist-native-win"
 path = "src/main.rs"
 
 [dependencies]
@@ -13,7 +15,9 @@ ctxpack = { path = "../ctxpack" }
 settings = { path = "../settings" }
 
 # 只在 Windows 上取真正用到的 API；mac/Linux 上这个 crate 编成一个空 main，
-# 这样 `cargo test` 在 Mac 上照样全绿，不会多一个编不过的目标
+# 这样 `cargo test` 在 Mac 上照样全绿，不会多一个编不过的目标。
+# 注意：依赖解析不分宿主，所以在 mac 上 `cargo build --offline` 会因为索引里没有
+# webview2-com 而失败 —— 这些包只参与解析，不参与编译
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39.1"
 # 版本必须跟 webview2-com 用的那套 windows-core 对齐，否则 HWND 跨不过去

@@ -5,14 +5,14 @@
 use std::cell::RefCell;
 use std::time::Instant;
 
+use webview2_com::Microsoft::Web::WebView2::Win32::{
+    CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2Controller, ICoreWebView2Environment,
+};
 use webview2_com::{
     CreateCoreWebView2ControllerCompletedHandler, CreateCoreWebView2EnvironmentCompletedHandler,
 };
 use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::Foundation::{HWND, RECT};
-use webview2_com::Microsoft::Web::WebView2::Win32::{
-    CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2Controller, ICoreWebView2Environment,
-};
 
 thread_local! {
     // COM 回调只会在本线程（STA）上跑，所以用 thread_local 而不是 channel：
@@ -56,16 +56,17 @@ pub fn tick(hwnd: HWND) {
         ENV.with(|e| e.borrow().clone()),
         CTRL.with(|c| c.borrow().clone()),
     ) {
-        let handler = CreateCoreWebView2ControllerCompletedHandler::create(Box::new(|result, ctrl| {
-            if let Err(e) = result {
-                println!("webview controller failed: {e}");
-                return Ok(());
-            }
-            if let Some(ctrl) = ctrl {
-                CTRL.with(|c| *c.borrow_mut() = Some(ctrl.clone()));
-            }
-            Ok(())
-        }));
+        let handler =
+            CreateCoreWebView2ControllerCompletedHandler::create(Box::new(|result, ctrl| {
+                if let Err(e) = result {
+                    println!("webview controller failed: {e}");
+                    return Ok(());
+                }
+                if let Some(ctrl) = ctrl {
+                    CTRL.with(|c| *c.borrow_mut() = Some(ctrl.clone()));
+                }
+                Ok(())
+            }));
         unsafe {
             env.CreateCoreWebView2Controller(hwnd, &handler)
                 .expect("CreateCoreWebView2Controller")

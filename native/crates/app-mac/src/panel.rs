@@ -21,13 +21,13 @@ use objc2_foundation::{NSArray, NSPoint, NSRect, NSSize, NSString};
 
 use crate::flipped::{flipped_clip, flipped_view};
 use crate::geo::{Geometry, EDGE};
-use settings::{PromptTemplate, SessionPath, SiteTarget};
 use crate::views::Pill;
 use crate::views::{
     self, CTRL_H, DOT, GAP, HEAD_H, ICON, LINE_H, PAD_BOTTOM, PAD_TOP, PAD_X, ROW_GAP, R_CTRL,
     R_FIELD, R_WINDOW, S1, S2, T_BODY, T_HEAD, T_META,
 };
 use ctxpack::adapters::SessionRef;
+use settings::{PromptTemplate, SessionPath, SiteTarget};
 
 pub const WIDTH: f64 = 400.0;
 /// Electron 的 autoHeight 下限

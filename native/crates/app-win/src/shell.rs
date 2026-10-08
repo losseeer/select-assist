@@ -6,14 +6,14 @@ use std::env;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use windows::core::w;
-use windows::Win32::Foundation::{HWND, HINSTANCE, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE,
     DWM_SYSTEMBACKDROP_TYPE, DWM_WINDOW_CORNER_PREFERENCE,
 };
 use windows::Win32::Graphics::Gdi::{
-    ClientToScreen, GetMonitorInfoW, InvalidateRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-    MonitorFromPoint, ValidateRect,
+    ClientToScreen, GetMonitorInfoW, InvalidateRect, MonitorFromPoint, ValidateRect, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
@@ -22,7 +22,7 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
     GetWindowRect, LoadCursorW, PostQuitMessage, RegisterClassExW, SetTimer, SetWindowPos,
-    ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, HWND_TOPMOST, HTCAPTION, HTCLIENT,
+    ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, HTCAPTION, HTCLIENT, HWND_TOPMOST,
     IDC_ARROW, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOW, WM_DESTROY, WM_LBUTTONUP,
     WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_EX_LAYERED,
     WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP,
@@ -207,17 +207,13 @@ unsafe fn apply_saved_position(hwnd: HWND) {
         return;
     }
     let wa = info.rcWork;
-    pt.x = pt.x.min(wa.right - (WIDTH as f32 * scale) as i32).max(wa.left);
-    pt.y = pt.y.min(wa.bottom - (HEIGHT as f32 * scale) as i32).max(wa.top);
-    let _ = SetWindowPos(
-        hwnd,
-        None,
-        pt.x,
-        pt.y,
-        0,
-        0,
-        SWP_NOSIZE | SWP_NOACTIVATE,
-    );
+    pt.x =
+        pt.x.min(wa.right - (WIDTH as f32 * scale) as i32)
+            .max(wa.left);
+    pt.y =
+        pt.y.min(wa.bottom - (HEIGHT as f32 * scale) as i32)
+            .max(wa.top);
+    let _ = SetWindowPos(hwnd, None, pt.x, pt.y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
 /// SA_SETTINGS 指到别处时用它，避免冒烟测试写进用户真实的 settings.json
@@ -302,9 +298,10 @@ fn lparam_point(l: LPARAM) -> (i32, i32) {
 }
 
 fn hit(hwnd: HWND, pt: (i32, i32)) -> Option<&'static str> {
-    UI.with(|u| crate::paint::hit(&u.borrow().layout, pt, unsafe {
-        GetDpiForWindow(hwnd)
-    } as f32))
+    UI.with(|u| {
+        crate::paint::hit(&u.borrow().layout, pt, unsafe { GetDpiForWindow(hwnd) }
+            as f32)
+    })
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
@@ -372,7 +369,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             match w.0 {
                 SMOKE_TIMER => {
                     let painted = UI.with(|u| u.borrow().painted);
-                    println!("smoke 到期，首帧已画={painted}，收到消息 {} 条", MSGS.load(Ordering::Relaxed));
+                    println!(
+                        "smoke 到期，首帧已画={painted}，收到消息 {} 条",
+                        MSGS.load(Ordering::Relaxed)
+                    );
                     let _ = DestroyWindow(hwnd);
                 }
                 HEARTBEAT => crate::webview::tick(hwnd),
@@ -382,15 +382,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
                     // 不依赖合成鼠标事件（那玩意儿在这台机器上不可靠）
                     if env::var("SA_MOVE").is_ok() && !MOVED.with(|m| m.get()) {
                         MOVED.with(|m| m.set(true));
-                        let _ = SetWindowPos(
-                            hwnd,
-                            None,
-                            120,
-                            120,
-                            0,
-                            0,
-                            SWP_NOSIZE | SWP_NOACTIVATE,
-                        );
+                        let _ =
+                            SetWindowPos(hwnd, None, 120, 120, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
                     }
                 }
                 _ => {}
