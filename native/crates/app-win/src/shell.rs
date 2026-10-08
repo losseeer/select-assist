@@ -1495,8 +1495,7 @@ fn apply_save(
     ui.dirty = false;
 }
 
-/// 保存：三个框读回来按行解析，坏行只报行号、不清空其它行；
-/// 会话路径整份都是坏行时拒绝保存（那样等于把所有会话源停掉，多半是手滑）。
+/// 保存：三个框读回来按行解析，坏行只报行号、不清空其它行，其余照常落盘。
 /// 文案与 mac 的 save_settings 同一套，两版一起改。
 unsafe fn save_settings(chip: HWND) {
     let template = edits::get(edits::TEMPLATE);
@@ -1504,10 +1503,10 @@ unsafe fn save_settings(chip: HWND) {
     let sites_text = edits::get(edits::SITES);
     let (paths, bad_paths) = settings::parse_session_paths(&sessions_text);
     let (sites, bad_sites) = settings::parse_sites(&sites_text);
-    if paths.is_empty() {
-        flash(chip, "会话路径全部是坏行");
-        return;
-    }
+    // 这里原来有一道"整框都是坏行就拒绝保存"的闸，mac 与 Electron 都没有，而且它是
+    // 一个 early return：用户同一次点保存里的模板改动和红敏开关会被一起丢掉。
+    // 清空会话路径本来就是"停扫那个源"的正规做法（框上方的说明就是这么写的），
+    // 所以按 mac 的口径走：坏行只报行号，其余照常落盘。
     let read = UI.with(|u| u.borrow().settings.with_context);
     // 框里的文字留在本模式的草稿槽里：保存不等于丢弃编辑历史，
     // 下一次切回来看到的仍然是自己打的那几行
