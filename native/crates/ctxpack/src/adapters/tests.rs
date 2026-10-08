@@ -219,7 +219,14 @@ fn qoder_cn_ide_jsonl_discovery_and_transcript() {
 #[test]
 fn corrupt_file_degrades_with_error_not_throw() {
     let home = fixture_home();
-    let bad = home.home.join(".claude/projects/-bad/deadbeef.jsonl");
+    // 逐段 join，和 adapter 自己的 home_relative 一样：一次塞进 "/" 在 Windows 上会拼出
+    // 混合分隔符，比较 file_path 时就成了假失败
+    let bad = home
+        .home
+        .join(".claude")
+        .join("projects")
+        .join("-bad")
+        .join("deadbeef.jsonl");
     std::fs::create_dir_all(bad.parent().unwrap()).unwrap();
     std::fs::write(&bad, "not json\nat all\n").unwrap();
     let adapter = claude_code::adapter();
