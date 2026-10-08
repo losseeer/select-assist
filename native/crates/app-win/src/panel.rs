@@ -99,9 +99,36 @@ pub struct Pen {
     hwnd: HWND,
     s: f32,
     hits: Vec<Hit>,
+    /// 正文可见带（DIP）。滚动把正文平移上去之后，画被 IntersectClipRect 裁住了，
+    /// 但命中区也得跟着裁 —— 否则滚出视野的会话行还留在命中表里，点在钉住的头部
+    /// 会静默挂上另一条会话（实测过：payload 的 md5 变了）。
+    clip: Option<(f32, f32)>,
 }
 
 impl Pen {
+    /// 登记一块命中区。设了 clip 就与可见带求交，交没了就不登记 ——
+    /// rect_of 的调用方（三个原生 EDIT 的摆放）因此会自动拿到被裁过的矩形，
+    /// 完全滚出去的那个框会收到 None 从而被隐藏，而不是糊在头部上。
+    fn push(&mut self, id: Id, r: RectF, idx: Option<usize>) {
+        let r = match self.clip {
+            Some((top, bottom)) => {
+                let t = r.top.max(top);
+                let b = r.bottom.min(bottom);
+                if b - t < 2.0 {
+                    return;
+                }
+                RectF {
+                    left: r.left,
+                    top: t,
+                    right: r.right,
+                    bottom: b,
+                }
+            }
+            None => r,
+        };
+        self.hits.push(Hit { id, r, idx });
+    }
+
     fn round(&self, r: RectF, radius: f32, color: COLORREF) {
         draw::fill_round(self.hdc, r.to_native(self.s), radius, self.s, color);
     }
@@ -134,7 +161,7 @@ impl Pen {
         let r = RectF::new(if from_right { x - w } else { x }, y, w, CTRL_H);
         self.round(r, R_CTRL, if hot { ACCENT_HOVER } else { ACCENT });
         self.line(label, r, WHITE, T_BODY, CENTER);
-        self.hits.push(Hit { id, r, idx: None });
+        self.push(id, r, None);
         w
     }
 
@@ -143,7 +170,7 @@ impl Pen {
         let r = RectF::new(x, y, w, CTRL_H);
         self.round(r, R_CTRL, if hot { FILL } else { TRACK });
         self.line(label, r, INK, T_BODY, CENTER);
-        self.hits.push(Hit { id, r, idx: None });
+        self.push(id, r, None);
     }
 
     /// 图标位（▾ / ✕）：只有字形，socket 决定要不要给一块底
@@ -153,7 +180,7 @@ impl Pen {
             self.round(r, R_CTRL, TRACK);
         }
         self.line(glyph, r, DIM, T_BODY, CENTER);
-        self.hits.push(Hit { id, r, idx: None });
+        self.push(id, r, None);
     }
 }
 
@@ -210,11 +237,7 @@ fn mode_row(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
         }
         p.line(name, r, if *on { INK } else { DIM }, T_BODY, CENTER);
         // 点当前已选中的那一段什么也不做，所以分成两个 id，shell 那边少一次判断
-        p.hits.push(Hit {
-            id: if *on { "mode-on" } else { "mode-off" },
-            r,
-            idx: None,
-        });
+        p.push(if *on { "mode-on" } else { "mode-off" }, r, None);
     }
 
     if v.read_mode {
@@ -333,11 +356,7 @@ fn browser(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
             T_META,
             LEFT,
         );
-        p.hits.push(Hit {
-            id: "browser",
-            r,
-            idx: Some(i),
-        });
+        p.push("browser", r, Some(i));
     }
     if v.browser_rows.is_empty() {
         p.line(
@@ -358,11 +377,7 @@ fn settings_toggle(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
     let w = p.pill_width(&label) - 24.0;
     let r = RectF::new(PAD_X, y, w.max(72.0), CTRL_H);
     p.line(&label, r, DIM, T_BODY, LEFT);
-    p.hits.push(Hit {
-        id: "settings",
-        r,
-        idx: None,
-    });
+    p.push("settings", r, None);
     y + CTRL_H
 }
 
@@ -381,7 +396,7 @@ fn label_row(p: &Pen, body_w: f32, text: &str, y: f32) -> f32 {
 fn field_box(p: &mut Pen, id: Id, y: f32, h: f32) -> f32 {
     let r = RectF::new(PAD_X, y, WIDTH - 2.0 * PAD_X, h);
     p.round(r, R_FIELD, FIELD);
-    p.hits.push(Hit { id, r, idx: None });
+    p.push(id, r, None);
     y + h + GAP
 }
 
@@ -423,11 +438,7 @@ fn settings_editor(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
         },
     );
     p.line("删除", r, WHITE, T_BODY, CENTER);
-    p.hits.push(Hit {
-        id: "prompt-del",
-        r,
-        idx: None,
-    });
+    p.push("prompt-del", r, None);
     p.line(
         &format!(
             "{} / 共 {} 条",
@@ -474,11 +485,7 @@ fn settings_editor(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
         T_BODY,
         LEFT,
     );
-    p.hits.push(Hit {
-        id: "redact",
-        r: RectF::new(PAD_X, y, body_w, CTRL_H),
-        idx: None,
-    });
+    p.push("redact", RectF::new(PAD_X, y, body_w, CTRL_H), None);
     y += CTRL_H + ROW_GAP;
 
     let mut y = label_row(p, body_w, &v.sites_label, y);
@@ -601,6 +608,7 @@ pub fn paint(hwnd: HWND, v: &PanelView) -> Layout {
         hwnd,
         s,
         hits: Vec::new(),
+        clip: None,
     };
 
     unsafe {
@@ -618,6 +626,8 @@ pub fn paint(hwnd: HWND, v: &PanelView) -> Layout {
         let body_top = (y * s) as i32;
         IntersectClipRect(mem, 0, body_top, pw, ph);
         y -= v.scroll.clamp(0.0, v.scroll_max());
+        // 命中带用 DIP（矩形都是 DIP），窗口底边要从物理像素折回来
+        p.clip = Some((y + v.scroll.clamp(0.0, v.scroll_max()), ph as f32 / s));
         p.line(
             &v.session_line,
             RectF::new(PAD_X, y, WIDTH - 2.0 * PAD_X, LINE_H),
