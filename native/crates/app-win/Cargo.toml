@@ -1,0 +1,24 @@
+[package]
+name = "app-win"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "select-assist-native"
+path = "src/main.rs"
+
+[dependencies]
+ctxpack = { path = "../ctxpack" }
+
+# 只在 Windows 上取真正用到的 API；mac/Linux 上这个 crate 编成一个空 main，
+# 这样 `cargo test` 在 Mac 上照样全绿，不会多一个编不过的目标
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+] }
