@@ -1,17 +1,17 @@
 //! 会话上下文：发现 → 选会话 → 读 transcript → clean/v1 渲染 → assemblePrompt。
 //! 对照 packages/panel/src/main/capture.ts（userCandidates / attachContext / currentPayload）。
 
-use crate::ctxpack::adapters::claude_code;
-use crate::ctxpack::adapters::codex::Codex;
-use crate::ctxpack::adapters::qoder;
-use crate::ctxpack::adapters::util;
-use crate::ctxpack::adapters::workbuddy::Workbuddy;
-use crate::ctxpack::adapters::{mtime_ms, Adapter, DiscoverOpts, SessionRef};
-use crate::ctxpack::build::BuildInput;
-use crate::ctxpack::prompt::AssembleInput;
-use crate::ctxpack::types::{Capture, Selection, Source, TranscriptTurn};
-use crate::ctxpack::utf16;
-use crate::ctxpack::{build_pack, pick_session, redact_paths, render};
+use ctxpack::adapters::claude_code;
+use ctxpack::adapters::codex::Codex;
+use ctxpack::adapters::qoder;
+use ctxpack::adapters::util;
+use ctxpack::adapters::workbuddy::Workbuddy;
+use ctxpack::adapters::{mtime_ms, Adapter, DiscoverOpts, SessionRef};
+use ctxpack::build::BuildInput;
+use ctxpack::prompt::AssembleInput;
+use ctxpack::types::{Capture, Selection, Source, TranscriptTurn};
+use ctxpack::utf16;
+use ctxpack::{build_pack, pick_session, redact_paths, render};
 use crate::settings::{active_template, AppSettings};
 
 /// 轮数是唯一的裁剪旋钮：任何地方都不做字符截断
@@ -75,7 +75,7 @@ impl AdapterKind {
         }
     }
 
-    fn read(self, reference: &SessionRef) -> crate::ctxpack::adapters::TranscriptResult {
+    fn read(self, reference: &SessionRef) -> ctxpack::adapters::TranscriptResult {
         match self {
             AdapterKind::ClaudeCode => claude_code::adapter().read_transcript(reference),
             AdapterKind::Codex => Codex.read_transcript(reference),
@@ -497,7 +497,7 @@ impl Pack {
             });
         }
 
-        let assembled = crate::ctxpack::prompt::assemble_prompt(&AssembleInput {
+        let assembled = ctxpack::prompt::assemble_prompt(&AssembleInput {
             template: &active_template(settings),
             selection: &pack.selection.clone().map(|s| s.text).unwrap_or_default(),
             context: &context,
@@ -546,7 +546,7 @@ fn home_dir() -> String {
 mod tests {
     use super::*;
     use crate::settings::{PromptTemplate, SessionPath};
-    use crate::test_support::fixture_home;
+    use test_support::fixture_home;
 
     fn settings_for(home: &str) -> AppSettings {
         AppSettings {

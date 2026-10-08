@@ -1,17 +1,16 @@
 //! 与 packages/ctxpack/test/ctxpack.test.mjs 一一对应的行为规格（18 例）。
 
-use std::path::Path;
 
 use serde_json::json;
 
-use crate::ctxpack::build::{build_pack, BuildInput};
-use crate::ctxpack::prompt::Assembled;
-use crate::ctxpack::prompt::{assemble_prompt, AssembleInput};
-use crate::ctxpack::redact::redact_paths;
-use crate::ctxpack::types::CtxPack;
-use crate::ctxpack::types::{Capture, Limits, Selection, Source, TranscriptTurn};
-use crate::ctxpack::utf16;
-use crate::ctxpack::validate::validate_pack;
+use crate::build::{build_pack, BuildInput};
+use crate::prompt::Assembled;
+use crate::prompt::{assemble_prompt, AssembleInput};
+use crate::redact::redact_paths;
+use crate::types::CtxPack;
+use crate::types::{Capture, Limits, Selection, Source, TranscriptTurn};
+use crate::utf16;
+use crate::validate::validate_pack;
 
 fn capture() -> Capture {
     Capture {
@@ -408,7 +407,7 @@ fn limits_round_trip_through_json() {
 /// Rust 侧必须逐字节一致（含 "turns:0--1" 这类既有怪癖，以及 emoji 的 UTF-16 计数）。
 #[test]
 fn matches_typescript_reference_output() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/parity-ts.json");
+    let path = test_support::fixtures_dir().join("parity-ts.json");
     let cases: Vec<serde_json::Value> =
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(cases.len(), 9);

@@ -18,7 +18,7 @@ else
   cargo build
 fi
 
-version=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -1)
+version=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' crates/app-mac/Cargo.toml | head -1)
 [[ -n "$version" ]] || { echo "Cargo.toml 里读不到 version" >&2; exit 1; }
 
 app=dist/select-assist-native.app

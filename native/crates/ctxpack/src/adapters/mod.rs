@@ -9,7 +9,7 @@ mod tests;
 pub mod util;
 pub mod workbuddy;
 
-use crate::ctxpack::types::TranscriptTurn;
+use crate::types::TranscriptTurn;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SessionRef {

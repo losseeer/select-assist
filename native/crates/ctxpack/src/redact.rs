@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::ctxpack::types::CtxPack;
+use crate::types::CtxPack;
 
 /// `/Users/<name>` → `~/user`
 static POSIX_USERS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"/Users/[^/\s"]+"#).unwrap());

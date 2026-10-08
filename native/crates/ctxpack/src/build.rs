@@ -1,7 +1,7 @@
 //! buildPack：体积超限时「先裁每条、再丢最旧、最后才截选区」，每步都在 dropped 里留名。
 //! 对照 packages/ctxpack/src/build.ts。
 
-use crate::ctxpack::{time, types::*, utf16};
+use crate::{time, types::*, utf16};
 
 pub const DEFAULT_MAX_CHARS: usize = 8000;
 /// 广度优先：先把每条压短，实在放不下才整条丢弃
@@ -151,7 +151,7 @@ pub fn build_pack(input: &BuildInput) -> Result<CtxPack, String> {
         }
 
         let mut pack = draft(input, &generated_at, kept, input.max_chars, &dropped);
-        let payload = crate::ctxpack::render::render(&pack, &input.template_id, &dropped);
+        let payload = crate::render::render(&pack, &input.template_id, &dropped);
         if utf16::len(&payload) <= input.max_chars {
             pack.limits = Some(Limits {
                 max_chars: Some(input.max_chars),
@@ -178,7 +178,7 @@ pub fn build_pack(input: &BuildInput) -> Result<CtxPack, String> {
             }),
             ..pack.clone()
         };
-        let payload = crate::ctxpack::render::render(&bare, &input.template_id, &dropped);
+        let payload = crate::render::render(&bare, &input.template_id, &dropped);
         utf16::len(&payload)
     };
     let room = input.max_chars.saturating_sub(overhead + 1); // 1 个省略号
@@ -193,7 +193,7 @@ pub fn build_pack(input: &BuildInput) -> Result<CtxPack, String> {
         text,
         ..input.selection.clone()
     });
-    let payload = crate::ctxpack::render::render(&pack, &input.template_id, &dropped);
+    let payload = crate::render::render(&pack, &input.template_id, &dropped);
     pack.limits = Some(Limits {
         max_chars: Some(input.max_chars),
         used_chars: Some(utf16::len(&payload)),

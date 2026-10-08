@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::ctxpack::adapters::util::{self, RawTurn};
-use crate::ctxpack::adapters::{
+use crate::adapters::util::{self, RawTurn};
+use crate::adapters::{
     head_records, mtime_ms, note_dropped, read_whole, sort_by_mtime, unparsable_dropped, Adapter,
     DiscoverOpts, SessionRef, TranscriptResult, EMPTY_FILE,
 };

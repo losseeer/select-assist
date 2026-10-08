@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 
-use crate::ctxpack::adapters::jsonl::{self, home_relative};
-use crate::ctxpack::adapters::util::{self, RawTurn};
-use crate::ctxpack::adapters::{note_dropped, Adapter, DiscoverOpts, SessionRef, TranscriptResult};
+use crate::adapters::jsonl::{self, home_relative};
+use crate::adapters::util::{self, RawTurn};
+use crate::adapters::{note_dropped, Adapter, DiscoverOpts, SessionRef, TranscriptResult};
 
 const AGENT: &str = "qoder";
 const SQLITE_ADAPTER: &str = "qoderwork-sqlite@0";
@@ -267,7 +267,7 @@ impl Adapter for Qoder {
             limit,
             ..opts.clone()
         }));
-        crate::ctxpack::adapters::sort_by_mtime(&mut refs);
+        crate::adapters::sort_by_mtime(&mut refs);
         refs.truncate(limit);
         refs
     }

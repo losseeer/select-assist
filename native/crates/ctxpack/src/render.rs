@@ -1,6 +1,6 @@
 //! 渲染模板，逐行对照 packages/ctxpack/src/render.ts。
 
-use crate::ctxpack::types::{CtxPack, TranscriptTurn};
+use crate::types::{CtxPack, TranscriptTurn};
 
 fn user_line(t: &TranscriptTurn) -> String {
     let speaker = if t.role == "user" { "用户" } else { "助手" };
@@ -8,7 +8,7 @@ fn user_line(t: &TranscriptTurn) -> String {
 }
 
 fn header(pack: &CtxPack) -> String {
-    let fallback = crate::ctxpack::types::Source::default();
+    let fallback = crate::types::Source::default();
     let source = pack.source.as_ref().unwrap_or(&fallback);
     let mut parts = vec![
         source

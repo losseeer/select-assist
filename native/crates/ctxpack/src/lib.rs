@@ -17,13 +17,13 @@ pub mod validate;
 #[cfg(test)]
 mod tests;
 
-// 只转出真正被面板用到的名字；其余走 crate::ctxpack::<module>::<item> 原路径
+// 只转出真正被面板用到的名字；其余走 crate::<module>::<item> 原路径
 pub use adapters::SessionRef;
 pub use build::build_pack;
 pub use redact::redact_paths;
 pub use render::render;
 
-use crate::ctxpack::adapters::util::match_cwd;
+use crate::adapters::util::match_cwd;
 
 /// 会话归属：先精确 cwd，再前缀匹配，最后按 mtime 猜 —— 猜的必须说明是猜的
 pub fn pick_session(refs: &[SessionRef], cwd: Option<&str>) -> Option<(SessionRef, String)> {

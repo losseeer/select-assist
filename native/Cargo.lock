@@ -37,6 +37,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctxpack"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "test-support",
+]
+
+[[package]]
 name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -426,15 +438,15 @@ name = "select-assist-native"
 version = "0.1.0"
 dependencies = [
  "block2",
+ "ctxpack",
  "dirs",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-quartz-core",
- "regex",
- "rusqlite",
  "serde",
  "serde_json",
+ "test-support",
 ]
 
 [[package]]
@@ -502,6 +514,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "test-support"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
 ]
 
 [[package]]

@@ -7,6 +7,13 @@ use rusqlite::Connection;
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+/// 共享 fixture 的位置：native/fixtures/，两个 crate 的测试都从这里取
+pub fn fixtures_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
+        .canonicalize()
+        .expect("native/fixtures 不存在")
+}
+
 pub struct FixtureHome {
     pub home: PathBuf,
     pub cwd: String,
@@ -111,7 +118,7 @@ pub fn scratch_dir(tag: &str) -> PathBuf {
 pub fn fixture_home() -> FixtureHome {
     let home = scratch_dir("ctxpack");
     copy_tree(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures"),
+        &fixtures_dir(),
         &home,
         &home.to_string_lossy(),
     );

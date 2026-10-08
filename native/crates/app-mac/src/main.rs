@@ -2,14 +2,11 @@ mod app;
 mod capture;
 mod chip;
 mod context;
-mod ctxpack;
 mod flipped;
 mod geo;
 mod panel;
 mod pasteboard;
 mod settings;
-#[cfg(test)]
-mod test_support;
 mod views;
 
 use objc2::MainThreadMarker;

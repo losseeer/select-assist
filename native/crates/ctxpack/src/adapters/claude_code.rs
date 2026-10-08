@@ -1,6 +1,6 @@
 //! Claude Code：~/.claude/projects/<project>/<uuid>.jsonl
 
-use crate::ctxpack::adapters::jsonl::{self, JsonlAdapter};
+use crate::adapters::jsonl::{self, JsonlAdapter};
 
 pub fn adapter() -> JsonlAdapter {
     jsonl::make("claude-code", "claude-code-jsonl@0", |home| {

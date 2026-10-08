@@ -54,7 +54,7 @@ dirs = "6"                                                 # home dir
 
 ## 4. ctxpack 移植（纯逻辑，Rust 直译 + 单测）
 
-`native/src/ctxpack/`：
+`native/crates/ctxpack/`（独立 crate，不依赖任何 AppKit 类型 —— 这样 Windows 外壳能直接复用同一份逻辑，不必再维护第二套盘符折叠和 %APPDATA% 推导）：
 
 - `types.rs` — CtxPack/TranscriptTurn/SiteTarget 等（serde 对齐 JSON 字段名）
 - `render.rs` — clean/v1 渲染（`用户> / 助手>` 行、分隔线）

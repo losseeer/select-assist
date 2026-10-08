@@ -80,7 +80,7 @@ pub fn default_session_paths(home: &str) -> Vec<SessionPath> {
             path: format!("{home}/.qoder-cn/projects"),
         },
     ];
-    let db = crate::ctxpack::adapters::qoder::qoder_work_db_path(None)
+    let db = ctxpack::adapters::qoder::qoder_work_db_path(None)
         .to_string_lossy()
         .to_string();
     paths.push(SessionPath {

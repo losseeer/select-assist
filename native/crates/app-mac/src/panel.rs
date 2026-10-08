@@ -19,7 +19,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSArray, NSPoint, NSRect, NSSize, NSString};
 
-use crate::ctxpack::adapters::SessionRef;
+use ctxpack::adapters::SessionRef;
 use crate::flipped::{flipped_clip, flipped_view};
 use crate::geo::{Geometry, EDGE};
 use crate::settings::{PromptTemplate, SessionPath, SiteTarget};

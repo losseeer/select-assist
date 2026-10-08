@@ -16,7 +16,7 @@ use objc2_foundation::{NSNotification, NSNotificationCenter, NSObject, NSObjectP
 use crate::capture::{self, ClipNote};
 use crate::chip::{self, Chip};
 use crate::context::{self, Pack, Payload};
-use crate::ctxpack::adapters::SessionRef;
+use ctxpack::adapters::SessionRef;
 use crate::geo::{Geometry, Rect};
 use crate::panel::{Panel, Row};
 use crate::pasteboard;

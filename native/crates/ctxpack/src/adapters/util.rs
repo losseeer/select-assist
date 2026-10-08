@@ -5,8 +5,8 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::Value;
 
-use crate::ctxpack::adapters::SessionRef;
-use crate::ctxpack::utf16;
+use crate::adapters::SessionRef;
+use crate::utf16;
 
 /// harness 会往用户消息里塞合成块（IDE 上下文、提醒、slash 命令包装），这些不是用户打的字。
 /// DROP 整块删掉；UNWRAP 只脱标签、留下真正的内容。
@@ -85,14 +85,14 @@ pub struct RawTurn {
 }
 
 /// 同一角色连续的多条合成一条（seq 就是最终下标）
-pub fn merge_turns(raw: Vec<RawTurn>) -> Vec<crate::ctxpack::types::TranscriptTurn> {
-    let mut merged: Vec<crate::ctxpack::types::TranscriptTurn> = Vec::new();
+pub fn merge_turns(raw: Vec<RawTurn>) -> Vec<crate::types::TranscriptTurn> {
+    let mut merged: Vec<crate::types::TranscriptTurn> = Vec::new();
     for turn in raw {
         match merged.last_mut() {
             Some(last) if last.role == turn.role => {
                 last.text = format!("{}\n{}", last.text, turn.text)
             }
-            _ => merged.push(crate::ctxpack::types::TranscriptTurn {
+            _ => merged.push(crate::types::TranscriptTurn {
                 role: turn.role,
                 text: turn.text,
                 seq: Some(merged.len()),

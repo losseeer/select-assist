@@ -1,7 +1,7 @@
 //! 选区模型 + 状态文案。M2 只有直通这一条路径：取进来什么，复制回去就是什么。
 //! 逐条对齐 packages/panel/src/main/capture.ts 与 static/renderer.js 的口径。
 
-use crate::ctxpack::utf16;
+use ctxpack::utf16;
 
 /// 已取入的选区。`text` 是 trim 之后的原文，直通模式逐字节写回它（不套模板、不脱敏）。
 #[derive(Clone, Debug, PartialEq)]

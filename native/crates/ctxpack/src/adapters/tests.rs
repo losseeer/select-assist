@@ -1,15 +1,15 @@
 //! 与 packages/ctxpack/test/adapters.test.mjs 一一对应（14 例）。
 //! fixture 是从 TS 的 fixtures.mjs 真实生成后复制到 native/fixtures/ 的，agents.db 在测试里按同样结构重建。
 
-use crate::test_support::{fixture_home, scratch_dir, write_qoder_work_db, FixtureHome};
+use test_support::{fixture_home, scratch_dir, write_qoder_work_db, FixtureHome};
 
-use crate::ctxpack::adapters::claude_code;
-use crate::ctxpack::adapters::codex::Codex;
-use crate::ctxpack::adapters::qoder::Qoder;
-use crate::ctxpack::adapters::util::match_cwd;
-use crate::ctxpack::adapters::workbuddy::Workbuddy;
-use crate::ctxpack::adapters::{Adapter, DiscoverOpts, SessionRef};
-use crate::ctxpack::pick_session;
+use crate::adapters::claude_code;
+use crate::adapters::codex::Codex;
+use crate::adapters::qoder::Qoder;
+use crate::adapters::util::match_cwd;
+use crate::adapters::workbuddy::Workbuddy;
+use crate::adapters::{Adapter, DiscoverOpts, SessionRef};
+use crate::pick_session;
 
 fn opts(home: &FixtureHome) -> DiscoverOpts {
     DiscoverOpts {
@@ -19,11 +19,11 @@ fn opts(home: &FixtureHome) -> DiscoverOpts {
     }
 }
 
-fn roles(turns: &[crate::ctxpack::types::TranscriptTurn]) -> Vec<String> {
+fn roles(turns: &[crate::types::TranscriptTurn]) -> Vec<String> {
     turns.iter().map(|t| t.role.clone()).collect()
 }
 
-fn pairs(turns: &[crate::ctxpack::types::TranscriptTurn]) -> Vec<(String, String)> {
+fn pairs(turns: &[crate::types::TranscriptTurn]) -> Vec<(String, String)> {
     turns
         .iter()
         .map(|t| (t.role.clone(), t.text.clone()))

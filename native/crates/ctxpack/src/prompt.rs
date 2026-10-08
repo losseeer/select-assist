@@ -1,7 +1,7 @@
 //! assemblePrompt：整条 Prompt 的预算，裁剪顺序是「先丢最旧上下文轮 → 再截选区 → 最后硬切」。
 //! 对照 packages/ctxpack/src/prompt.ts。
 
-use crate::ctxpack::utf16;
+use crate::utf16;
 
 pub struct AssembleInput<'a> {
     /// 含 {selection} 时按占位填充；不含时用一个空行接在指令后面
