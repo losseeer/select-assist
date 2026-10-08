@@ -46,7 +46,6 @@ const MARGIN_TOP: i32 = 60;
 const WIDTH: i32 = theme::WIDTH as i32;
 const HEIGHT: i32 = theme::CHIP_H as i32;
 const SMOKE_TIMER: usize = 0xA0;
-const HEARTBEAT: usize = 0xA1;
 const SAVETICK: usize = 0xA2;
 const FLASH: usize = 0xA3;
 const COPYHOLD: usize = 0xA4;
@@ -208,25 +207,6 @@ pub fn run() -> windows::core::Result<()> {
         let _ = ShowWindow(hwnd, SW_SHOW);
         // ShowWindow 不保证产生 WM_PAINT，显式失效一次
         let _ = InvalidateRect(Some(hwnd), None, true);
-    }
-
-    if env::var("SA_WEBVIEW").is_ok() {
-        let _ = unsafe {
-            windows::Win32::System::Com::CoInitializeEx(
-                None,
-                windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
-            )
-        };
-        match env::var("SA_WEBVIEW_URL").ok() {
-            Some(url) => {
-                // 用户数据目录单独放，别在 target/ 里留 WebView2 的垃圾
-                let data = std::env::temp_dir().join("sa-webview-experiment");
-                std::fs::create_dir_all(&data).ok();
-                crate::webview::start(hwnd, &data.to_string_lossy(), &url);
-                let _ = unsafe { SetTimer(Some(hwnd), HEARTBEAT, 50, None) };
-            }
-            None => println!("SA_WEBVIEW=1 但没给 SA_WEBVIEW_URL，跳过"),
-        }
     }
 
     UI.with(|u| u.borrow_mut().hwnd = hwnd);
@@ -1077,7 +1057,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
                     );
                     let _ = DestroyWindow(hwnd);
                 }
-                HEARTBEAT => crate::webview::tick(hwnd),
                 FLASH => {
                     UI.with(|u| u.borrow_mut().error = None);
                     let _ = KillTimer(Some(hwnd), FLASH);
