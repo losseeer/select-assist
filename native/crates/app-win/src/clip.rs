@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn writes_and_reads_back_utf16_text() {
-        let _guard = exclusive(|| {
+        exclusive(|| {
             let _restore = Restore::new();
             let text = "选区直通\r\n第二行 with English 和 emoji 🎯";
             assert!(write_text(text), "SetClipboardData 失败");

@@ -11,8 +11,8 @@ name = "select-assist-native-win"
 path = "src/main.rs"
 
 [dependencies]
-ctxpack = { path = "../ctxpack" }
 capture = { path = "../capture" }
+pack = { path = "../pack" }
 settings = { path = "../settings" }
 
 # 只在 Windows 上取真正用到的 API；mac/Linux 上这个 crate 编成一个空 main，

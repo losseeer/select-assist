@@ -29,6 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::clip;
+use settings::AppSettings;
 
 const WIDTH: i32 = 400;
 const HEIGHT: i32 = 44;
@@ -58,8 +59,12 @@ struct Ui {
     painted: bool,
     /// 上次落盘的位置（DIP）；只在真的变了时才写文件
     saved: Option<(f64, f64)>,
-    /// 已取入的选区；直通模式复制回去的就是它的 text
-    selection: Option<capture::Selection>,
+    /// 选区 + 会话上下文那一「包」，与 mac 共用 pack crate
+    pack: pack::Pack,
+    /// 面板/外壳都要用的那份设置；M4 加设置界面后改成每次读
+    settings: AppSettings,
+    /// pack 组装出来的待复制内容：直通是选区逐字节，会话解读是套模板的 Prompt
+    payload: Option<pack::Payload>,
     /// 未读复制（红点携带的信息），取入或自己写回后清掉
     unread: Option<capture::ClipNote>,
     /// 上次看到的剪贴板内容，用来判断"这是别人复制的"还是"我们自己的写回"
@@ -74,7 +79,9 @@ thread_local! {
         layout: crate::paint::Layout::default(),
         painted: false,
         saved: None,
-        selection: None,
+        pack: pack::Pack::default(),
+        settings: AppSettings::default(),
+        payload: None,
         unread: None,
         last_clip: String::new(),
         error: None,
@@ -158,6 +165,9 @@ pub fn run() -> windows::core::Result<()> {
         }
     }
 
+    // 设置只在启动时读一次：M4 加设置界面后改成每次用时现读
+    let settings = store().load();
+    UI.with(|u| u.borrow_mut().settings = settings);
     if !clip::watch(hwnd) {
         println!("剪贴板监听注册失败，未读点不会亮");
     }
@@ -246,38 +256,46 @@ fn store() -> settings::Settings {
     }
 }
 
-/// 取入选区：读剪贴板 → 存成选区 → 清未读点。空白剪贴板不算取入，只提示。
+/// 取入选区：读剪贴板 → 存进 pack → 会话解读模式再挂一次上下文。
+/// 空白剪贴板不算取入，只提示。对应 mac 的 capture_selection，面板那几步 M4 补。
 fn capture_selection(hwnd: HWND) {
     let text = clip::read_text().unwrap_or_default();
-    match capture::from_clipboard(&text, &clip::local_time()) {
-        Ok(selection) => {
-            UI.with(|u| {
-                let mut ui = u.borrow_mut();
-                ui.last_clip = text.clone();
-                ui.selection = Some(selection);
-                ui.unread = None;
-                ui.error = None;
-            });
+    let selection = match capture::from_clipboard(&text, &clip::local_time()) {
+        Ok(selection) => selection,
+        Err(reason) => return flash(hwnd, &reason),
+    };
+    UI.with(|u| {
+        let mut ui = u.borrow_mut();
+        ui.last_clip = text;
+        ui.pack.set_selection(selection);
+        ui.unread = None;
+        ui.error = None;
+        let settings = ui.settings.clone();
+        if settings.with_context {
+            // agent 先固定 auto：面板的会话下拉是 M4 的事，那时换成 panel 选中的 token
+            ui.pack
+                .attach(&settings, "auto", settings.context_turns, None, None);
         }
-        Err(reason) => flash(hwnd, &reason),
-    }
+        ui.payload = ui.pack.payload(&settings);
+    });
     let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
 }
 
-/// 直通复制：把选区原文逐字节写回剪贴板。mac 侧对应 app.rs 的 copy_payload，
-/// 那里的文案在这里原样沿用，两版不一致时一起改，别各写一份。
+/// 复制：直通是选区逐字节，会话解读是组装后的 Prompt —— 两者都是 payload.prompt，
+/// 分工在 pack 里，不在这里。mac 侧的文案原样沿用，两版不一致时一起改。
 fn copy_payload(hwnd: HWND) {
-    // 写回失败和没选区是同一件事：面板上还没有可复制的东西（mac 侧同一个分支同一个文案）
-    let Some(text) = UI.with(|u| u.borrow().selection.as_ref().map(|s| s.text.clone())) else {
+    // 写回失败和没有 payload 是同一件事：现在没有可复制的东西（mac 侧同一个文案）
+    let prompt = UI.with(|u| u.borrow().payload.as_ref().map(|p| p.prompt.clone()));
+    let Some(prompt) = prompt else {
         flash(hwnd, "还没有取入选区");
         return;
     };
-    if !clip::write_text(&text) {
+    if !clip::write_text(&prompt) {
         flash(hwnd, "还没有取入选区");
         return;
     }
     // 自己写回的东西不能反过来点亮未读点（Electron 在 pack:copy 里同步 lastClip）
-    UI.with(|u| u.borrow_mut().last_clip = text);
+    UI.with(|u| u.borrow_mut().last_clip = prompt);
     let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
 }
 
@@ -417,7 +435,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
                         ui.chip.status_err = true;
                     }
                     None => {
-                        ui.chip.status = capture::status_text(ui.selection.as_ref());
+                        ui.chip.status = ui.pack.status_line().0;
                         ui.chip.status_err = false;
                     }
                 }
