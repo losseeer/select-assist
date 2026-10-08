@@ -7,7 +7,7 @@
 use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
 use windows::Win32::System::DataExchange::{
     AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData,
-    IsClipboardFormatAvailable, OpenClipboard, SetClipboardData,
+    IsClipboardFormatAvailable, OpenClipboard, RemoveClipboardFormatListener, SetClipboardData,
 };
 use windows::Win32::System::Memory::{
     GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE, GMEM_ZEROINIT,
@@ -19,10 +19,16 @@ use windows::Win32::UI::WindowsAndMessaging::WM_CLIPBOARDUPDATE;
 /// 外壳 wndproc 里 match 用的消息号
 pub const UPDATED: u32 = WM_CLIPBOARDUPDATE;
 
-/// 把剪贴板变更通知挂到窗口上。mac 侧没有对应的通知 API，只能轮 changeCount，
-/// 所以那边比这边多一个 sequence 的概念——这边不需要。
+/// 把剪贴板变更通知挂到窗口上
 pub fn watch(hwnd: HWND) -> bool {
     unsafe { AddClipboardFormatListener(hwnd).is_ok() }
+}
+
+/// 窗口要没了，先把监听摘掉。不摘也不会崩，但系统会一直往一个已销毁的 HWND 上投递消息
+pub fn unwatch(hwnd: HWND) {
+    unsafe {
+        let _ = RemoveClipboardFormatListener(hwnd);
+    }
 }
 
 pub fn read_text() -> Option<String> {
@@ -55,7 +61,6 @@ pub fn write_text(text: &str) -> bool {
             return false;
         }
         let ok = (|| -> Option<()> {
-            EmptyClipboard().ok()?;
             let units: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
             let bytes = units.len() * std::mem::size_of::<u16>();
             let mem = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes).ok()?;
@@ -66,6 +71,9 @@ pub fn write_text(text: &str) -> bool {
             }
             std::ptr::copy_nonoverlapping(units.as_ptr(), dst, units.len());
             let _ = GlobalUnlock(mem);
+            // 到这一步才清空：EmptyClipboard 放前面的话，一旦分配失败，
+            // 用户原来复制的东西已经被毁掉，而我们的东西又没写进去
+            EmptyClipboard().ok()?;
             // 成功后所有权交给系统，此时再 GlobalFree 会破坏剪贴板内容
             if SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(mem.0))).is_err() {
                 let _ = GlobalFree(Some(mem));
@@ -123,13 +131,23 @@ mod tests {
         });
     }
 
+    /// 纯空白必须原样读回来 —— "算不算空"是 capture::from_clipboard 的判断，
+    /// 剪贴板这一层不能替它决定（否则复制了一个空行，红点根本不会亮）
     #[test]
-    fn empty_clipboard_reads_as_none_when_no_text_format() {
+    fn whitespace_survives_the_round_trip() {
         exclusive(|| {
             let _restore = Restore::new();
-            // 写一段纯空白：格式存在，读回来就是它自己，是否「算空」由 capture::from_clipboard 判定
-            assert!(write_text("   "));
-            assert_eq!(read_text().as_deref(), Some("   "));
+            assert!(write_text(
+                "   
+	 "
+            ));
+            assert_eq!(
+                read_text().as_deref(),
+                Some(
+                    "   
+	 "
+                )
+            );
         });
     }
 }

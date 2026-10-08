@@ -392,7 +392,9 @@ fn on_clipboard_update(hwnd: HWND) {
     let Some(text) = clip::read_text() else {
         return;
     };
-    if text.trim().is_empty() {
+    // 判据是"空"而不是"全空白"：空白复制照样点亮红点，取入时才由 capture 说剪贴板为空。
+    // 与 mac 的 poll 同一口径，两版对同一次复制的反应必须一样。
+    if text.is_empty() {
         return;
     }
     let changed = UI.with(|u| {
@@ -601,6 +603,10 @@ unsafe fn open_panel(chip: HWND) {
     let _ = InvalidateRect(Some(panel), None, true);
     UI.with(|u| u.borrow_mut().panel = panel);
     let _ = ShowWindow(chip, SW_HIDE);
+    // 设置组还开着的话，编辑框要跟着新窗口重建：它们是子窗口，随上一个面板一起销毁了
+    if UI.with(|u| u.borrow().settings_open) {
+        ensure_edits(panel);
+    }
 }
 
 unsafe fn close_panel() {
@@ -1188,6 +1194,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             LRESULT(0)
         }
         WM_DESTROY => {
+            clip::unwatch(hwnd);
             PostQuitMessage(0);
             LRESULT(0)
         }
@@ -1220,10 +1227,20 @@ unsafe fn toggle_settings(chip: HWND) {
         return;
     }
     if open {
-        edits::create(panel, theme::FIELD);
-        seed_edits();
+        ensure_edits(panel);
     }
     repaint(chip);
+}
+
+/// 设置组展开就得有三个原生 EDIT 挂在**当前这个**面板上。面板收起时它们随窗口一起没了，
+/// 而 settings_open 是留着的（mac 同理：折叠再展开，设置组还是开着的），
+/// 所以重开面板这条路上也要补一次，否则第一次点「设置」只是把它关掉，什么都没建。
+unsafe fn ensure_edits(panel: HWND) {
+    if panel.0.is_null() {
+        return;
+    }
+    edits::create(panel, theme::FIELD);
+    seed_edits();
 }
 
 unsafe fn seed_edits() {
@@ -1295,6 +1312,7 @@ unsafe fn del_prompt(chip: HWND) {
     let removed = UI.with(|u| {
         let mut ui = u.borrow_mut();
         if ui.settings.prompts.len() <= 1 {
+            flash(chip, "至少保留一条指令");
             return false;
         }
         let at = ui.draft_prompt.min(ui.settings.prompts.len() - 1);
@@ -1304,7 +1322,9 @@ unsafe fn del_prompt(chip: HWND) {
         ui.dirty = true;
         true
     });
-    let _ = removed;
+    if !removed {
+        return;
+    }
     seed_edits();
     repaint(chip);
 }
@@ -1337,8 +1357,8 @@ unsafe fn save_settings(chip: HWND) {
         ui.dirty = false;
     });
     let now = UI.with(|u| u.borrow().settings.clone());
-    if store().save(&now).is_err() {
-        flash(chip, "写设置失败");
+    if let Err(e) = store().save(&now) {
+        flash(chip, &format!("保存设置失败：{e}"));
         return;
     }
     let now = UI.with(|u| u.borrow().settings.clone());
@@ -1354,10 +1374,15 @@ unsafe fn save_settings(chip: HWND) {
     if !bad_paths.is_empty() {
         warn.push(format!("会话路径第 {} 行", join_rows(&bad_paths)));
     }
+    // 坏行的说法与 mac 一致：说清楚每类行该长什么样，以及"这些行没生效"而不是"整份没保存"
     let message = if warn.is_empty() {
         "已保存".to_string()
     } else {
-        warn.join("，")
+        format!(
+            "无效行（站点需 名称|http(s)://URL，路径需 {}|路径）：{}，未生效",
+            settings::AGENT_TOKENS.join("/"),
+            warn.join("，")
+        )
     };
     flash(chip, &message);
     repaint(chip);
