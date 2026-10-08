@@ -19,6 +19,9 @@ public class WinEnum {
     public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r);
+    // GWL_EXSTYLE = -20，WS_EX_TOPMOST = 0x8。z 序里排第几会被别的窗口影响，
+    // 这个位才是"到底有没有断言常驻顶层"的确定答案
+    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int index);
     [StructLayout(LayoutKind.Sequential)] public struct R { public int l, t, r, b; }
 }
 '@
@@ -44,10 +47,11 @@ $callback = [WinEnum+Cb] {
             Class   = $sb.ToString()
             Visible = [WinEnum]::IsWindowVisible($h)
             Rect    = "{0}x{1}@{2},{3}" -f ($r.r - $r.l), ($r.b - $r.t), $r.l, $r.t
+            Topmost = ([WinEnum]::GetWindowLong($h, -20) -band 8) -ne 0
         }
     }
     return $true
 }
 [WinEnum]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
 $found | Format-Table -AutoSize | Out-String -Width 200
-$found | ForEach-Object { "{0} {1}" -f $_.Hwnd, $_.Class }
+$found | ForEach-Object { "{0} {1} topmost={2}" -f $_.Hwnd, $_.Class, $_.Topmost }

@@ -619,6 +619,19 @@ unsafe fn open_panel(chip: HWND) {
         return;
     }
     apply_material(panel);
+    // 面板也要常驻顶层：chip 是，Electron 的两个窗口都是 alwaysOnTop，mac 的
+    // views::panel() 统一设了 NSFloatingWindowLevel。少这一步，用户一点别的窗口，
+    // 展开到一半的面板就被盖到后面去了 —— 而它是唯一能改设置、能退出程序的窗口。
+    // SWP_NOACTIVATE：置顶不抢焦点，抢焦点交给 M4d 的编辑框自己决定。
+    let _ = SetWindowPos(
+        panel,
+        Some(HWND_TOPMOST),
+        0,
+        0,
+        0,
+        0,
+        SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+    );
     let _ = ShowWindow(panel, SW_SHOW);
     let _ = InvalidateRect(Some(panel), None, true);
     UI.with(|u| u.borrow_mut().panel = panel);
