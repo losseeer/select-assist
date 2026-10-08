@@ -27,13 +27,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SetTimer, SetWindowPos, ShowWindow, TrackPopupMenu, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
     HTCAPTION, HTCLIENT, HWND_TOPMOST, IDC_ARROW, MF_BYCOMMAND, MF_CHECKED, MF_STRING, MSG,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNORMAL,
-    TPM_BOTTOMALIGN, TPM_LEFTBUTTON, TPM_RETURNCMD, WM_DESTROY, WM_LBUTTONUP, WM_MOUSEMOVE,
-    WM_NCHITTEST, WM_NULL, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_POPUP,
+    TPM_BOTTOMALIGN, TPM_LEFTBUTTON, TPM_RETURNCMD, WM_CTLCOLOREDIT, WM_DESTROY, WM_LBUTTONUP,
+    WM_MOUSEMOVE, WM_NCHITTEST, WM_NULL, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 use crate::clip;
-use crate::draw;
+use crate::draw::{self, RectF};
+use crate::edits;
 use crate::panel;
 use crate::theme;
 use settings::AppSettings;
@@ -101,6 +102,13 @@ struct Ui {
     copied: bool,
     panel_hover: Option<&'static str>,
     panel_row: Option<usize>,
+    /// 设置组是否展开。展开时才建那三个 EDIT —— 收着的时候它们是零个窗口
+    settings_open: bool,
+    /// 设置组里有没保存的改动
+    dirty: bool,
+    /// 正在编辑第几条指令的模板。跟 active_prompt 分开：草稿没保存前，
+    /// 输出组那个下拉显示的仍然是已生效的那条
+    draft_prompt: usize,
 }
 
 thread_local! {
@@ -126,6 +134,9 @@ thread_local! {
         copied: false,
         panel_hover: None,
         panel_row: None,
+        settings_open: false,
+        dirty: false,
+        draft_prompt: 0,
     });
 }
 
@@ -529,6 +540,16 @@ fn panel_view(ui: &Ui) -> panel::PanelView {
         copied: ui.copied,
         hover: ui.panel_hover,
         hover_row: ui.panel_row,
+        settings_open: ui.settings_open,
+        dirty: ui.dirty,
+        redact: ui.settings.redact_paths,
+        prompt_index: ui.settings.active_prompt,
+        prompt_count: ui.settings.prompts.len(),
+        sites_label: if ui.settings.with_context {
+            "会话解读目标站".into()
+        } else {
+            "直通目标站".into()
+        },
     };
     view
 }
@@ -602,6 +623,12 @@ unsafe fn panel_action(chip: HWND, id: &'static str, row: Option<usize>) {
         "copy" => copy_payload(chip),
         "agent" | "turns" | "prompt" => pick_menu(id),
         "site" => open_site(chip, row),
+        "settings" => toggle_settings(chip),
+        "prompt-pick" => pick_menu("prompt-pick"),
+        "prompt-new" => new_prompt(chip),
+        "prompt-del" => del_prompt(chip),
+        "redact" => toggle_redact(chip),
+        "save" => save_settings(chip),
         _ => {}
     }
 }
@@ -716,6 +743,14 @@ fn menu_for(ui: &Ui, id: &'static str) -> (Vec<String>, usize) {
                 .unwrap_or(1);
             (TURNS.iter().map(|(l, _)| l.to_string()).collect(), current)
         }
+        // 设置组里的指令选择器：选的是"草稿里第几条"，跟输出组那个"生效中"的下标不是一回事
+        "prompt-pick" => {
+            let current = ui
+                .draft_prompt
+                .min(ui.settings.prompts.len().saturating_sub(1));
+            let names: Vec<String> = ui.settings.prompts.iter().map(|p| p.name.clone()).collect();
+            (names, current)
+        }
         _ => {
             let current = ui
                 .settings
@@ -745,6 +780,13 @@ fn apply_pick(ui: &mut Ui, id: &'static str, index: usize) -> bool {
                 return false;
             }
             ui.settings.active_prompt = index;
+        }
+        "prompt-pick" => {
+            if index >= ui.settings.prompts.len() {
+                return false;
+            }
+            ui.draft_prompt = index;
+            ui.dirty = true;
         }
         _ => return false,
     }
@@ -800,8 +842,14 @@ unsafe fn pick_menu(id: &'static str) {
     let _ = DestroyMenu(menu);
     // MSDN 明确要求：菜单关掉后补一条消息，否则下一次点标题区不会先收起菜单
     let _ = PostMessageW(Some(panel), WM_NULL, WPARAM(0), LPARAM(0));
-    if picked.0 > 0 && UI.with(|u| apply_pick(&mut u.borrow_mut(), id, picked.0 as usize - 1)) {
-        persist_settings();
+    let index = picked.0;
+    if index > 0 && UI.with(|u| apply_pick(&mut u.borrow_mut(), id, index as usize - 1)) {
+        // 换草稿指向哪条指令不落到磁盘上，其余三个下拉都是即刻生效的设置
+        if id != "prompt-pick" {
+            persist_settings();
+        } else {
+            seed_edits();
+        }
         let chip = UI.with(|u| u.borrow().hwnd);
         repaint(chip);
     }
@@ -860,6 +908,9 @@ unsafe extern "system" fn panel_wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPAR
                 (want, rc.bottom)
             };
             let _ = ValidateRect(Some(hwnd), None);
+            if UI.with(|u| u.borrow().settings_open) {
+                unsafe { edits::place(field_rects(hwnd)) };
+            }
             // 内容高度要等画完才知道，所以第一帧之后自己改一次尺寸；差 1px 以内不动，避免抖
             if (height.0 - height.1).abs() > 1 {
                 let _ = SetWindowPos(
@@ -921,7 +972,16 @@ unsafe extern "system" fn panel_wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPAR
             }
             LRESULT(0)
         }
+        WM_CTLCOLOREDIT => {
+            let hdc = windows::Win32::Graphics::Gdi::HDC(w.0 as *mut _);
+            let brush = unsafe { edits::color_field(hdc, theme::FIELD, theme::INK) };
+            LRESULT(brush.0 as isize)
+        }
         WM_DESTROY => {
+            unsafe {
+                edits::destroy();
+                edits::release_brush();
+            }
             UI.with(|u| u.borrow_mut().panel = HWND::default());
             LRESULT(0)
         }
@@ -1062,6 +1122,169 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
     }
 }
 
+/* ---------- 设置组（M4d）：草稿、保存与那三个 EDIT 的调度 ---------- */
+
+/// 这一帧给三个字段框留好的位置（DIP -> 由 edits::place 自己按 DPI 换算）
+fn field_rects(panel: HWND) -> [Option<RectF>; edits::COUNT] {
+    let s = draw::scale(panel);
+    let _ = s;
+    std::array::from_fn(|i| UI.with(|u| u.borrow().panel_layout.rect_of(edits::FIELD_IDS[i])))
+}
+
+/// 打开设置组时才建 EDIT，并且只在这时和"换了一条指令"时把文字灌进去。
+/// 平时绝不回写：用户在框里打了一半，重画一次就把他的输入吞了，这类 bug 极难查。
+unsafe fn toggle_settings(chip: HWND) {
+    let open = UI.with(|u| {
+        let mut ui = u.borrow_mut();
+        ui.settings_open = !ui.settings_open;
+        if ui.settings_open {
+            ui.draft_prompt = ui.settings.active_prompt;
+        }
+        ui.settings_open
+    });
+    let panel = UI.with(|u| u.borrow().panel);
+    if panel.0.is_null() {
+        return;
+    }
+    if open {
+        edits::create(panel, theme::FIELD);
+        seed_edits();
+    }
+    repaint(chip);
+}
+
+unsafe fn seed_edits() {
+    let ui = UI.with(|u| u.borrow().clone_draft());
+    edits::set(edits::TEMPLATE, &ui.0);
+    edits::set(edits::SESSIONS, &ui.1);
+    edits::set(edits::SITES, &ui.2);
+}
+
+/// 当前草稿对应的三份文本：模板 / 会话路径 / 当前模式的站点
+impl Ui {
+    fn clone_draft(&self) -> (String, String, String) {
+        let template = self
+            .settings
+            .prompts
+            .get(self.draft_prompt)
+            .map(|p| p.template.clone())
+            .unwrap_or_default();
+        let sessions = self
+            .settings
+            .session_paths
+            .iter()
+            .map(|p| format!("{}|{}", p.agent, p.path))
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            );
+        let sites = if self.settings.with_context {
+            &self.settings.chat_sites
+        } else {
+            &self.settings.direct_sites
+        };
+        (template, sessions, settings::sites_text(sites))
+    }
+}
+
+unsafe fn toggle_redact(chip: HWND) {
+    UI.with(|u| {
+        let mut ui = u.borrow_mut();
+        ui.settings.redact_paths = !ui.settings.redact_paths;
+        ui.dirty = true;
+    });
+    repaint(chip);
+}
+
+unsafe fn new_prompt(chip: HWND) {
+    UI.with(|u| {
+        let mut ui = u.borrow_mut();
+        let n = ui.settings.prompts.len() + 1;
+        ui.settings.prompts.push(settings::PromptTemplate {
+            name: format!("指令 {n}"),
+            template: "{selection}".into(),
+        });
+        ui.draft_prompt = ui.settings.prompts.len() - 1;
+        ui.dirty = true;
+    });
+    seed_edits();
+    repaint(chip);
+}
+
+unsafe fn del_prompt(chip: HWND) {
+    let removed = UI.with(|u| {
+        let mut ui = u.borrow_mut();
+        if ui.settings.prompts.len() <= 1 {
+            return false;
+        }
+        let at = ui.draft_prompt.min(ui.settings.prompts.len() - 1);
+        ui.settings.prompts.remove(at);
+        ui.draft_prompt = at.min(ui.settings.prompts.len() - 1);
+        ui.settings.active_prompt = ui.draft_prompt;
+        ui.dirty = true;
+        true
+    });
+    let _ = removed;
+    seed_edits();
+    repaint(chip);
+}
+
+/// 保存：三个框读回来按行解析，坏行只报行号、不清空其它行；
+/// 会话路径整份都是坏行时拒绝保存（那样等于把所有会话源停掉，多半是手滑）。
+/// 文案与 mac 的 save_settings 同一套，两版一起改。
+unsafe fn save_settings(chip: HWND) {
+    let template = edits::get(edits::TEMPLATE);
+    let (paths, bad_paths) = settings::parse_session_paths(&edits::get(edits::SESSIONS));
+    let (sites, bad_sites) = settings::parse_sites(&edits::get(edits::SITES));
+    if paths.is_empty() {
+        flash(chip, "会话路径全部是坏行");
+        return;
+    }
+    let read = UI.with(|u| u.borrow().settings.with_context);
+    UI.with(|u| {
+        let mut ui = u.borrow_mut();
+        let at = ui.draft_prompt;
+        if let Some(prompt) = ui.settings.prompts.get_mut(at) {
+            prompt.template = template;
+        }
+        ui.settings.session_paths = paths;
+        if read {
+            ui.settings.chat_sites = sites;
+        } else {
+            ui.settings.direct_sites = sites;
+        }
+        ui.settings.active_prompt = ui.draft_prompt;
+        ui.dirty = false;
+    });
+    let now = UI.with(|u| u.borrow().settings.clone());
+    if store().save(&now).is_err() {
+        flash(chip, "写设置失败");
+        return;
+    }
+    let mut warn = Vec::new();
+    if !bad_sites.is_empty() {
+        warn.push(format!("站点第 {} 行", join_rows(&bad_sites)));
+    }
+    if !bad_paths.is_empty() {
+        warn.push(format!("会话路径第 {} 行", join_rows(&bad_paths)));
+    }
+    let message = if warn.is_empty() {
+        "已保存".to_string()
+    } else {
+        warn.join("，")
+    };
+    flash(chip, &message);
+    repaint(chip);
+}
+
+fn join_rows(rows: &[usize]) -> String {
+    rows.iter()
+        .map(|r| r.to_string())
+        .collect::<Vec<_>>()
+        .join("、")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1095,6 +1318,23 @@ mod tests {
     }
 
     /// 没有选区时 apply_pick 只改状态，绝不去读磁盘上的会话
+    /// 设置组的指令选择器只动草稿，不碰已生效的那条，也不落盘
+    #[test]
+    fn prompt_pick_moves_the_draft_not_the_active_one() {
+        with_ui(|u| {
+            u.settings.prompts.push(settings::PromptTemplate {
+                name: "另一条".into(),
+                template: "{selection}!".into(),
+            });
+            u.settings.active_prompt = 0;
+            assert!(apply_pick(u, "prompt-pick", 1));
+            assert_eq!(u.draft_prompt, 1);
+            assert_eq!(u.settings.active_prompt, 0, "没保存就不该改到生效中的那条");
+            assert!(u.dirty);
+            assert!(!apply_pick(u, "prompt-pick", 9));
+        });
+    }
+
     #[test]
     fn picking_without_a_selection_does_no_rework() {
         with_ui(|u| {

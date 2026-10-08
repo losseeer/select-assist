@@ -33,6 +33,9 @@ pub const LINE_H: f32 = 16.0;
 pub const DOT: f32 = 8.0;
 /// 会话浏览器一行
 pub const BROWSE_ROW: f32 = 36.0;
+/// 多行编辑框（对应 textarea rows=3~5）
+pub const FIELD_H: f32 = 66.0;
+pub const SESSIONS_H: f32 = 92.0;
 
 pub const T_BODY: f32 = 12.0;
 pub const T_META: f32 = 11.0;
@@ -80,6 +83,9 @@ pub const ACCENT_HOVER: COLORREF = COLORREF(0x00FF_9419);
 pub const ACCENT_SOFT: COLORREF = mix(PANEL, 10, 132, 255, 56);
 /// --warn #e5a13c
 pub const WARN: COLORREF = COLORREF(0x003C_A1E5);
+/// 破坏性操作（CSS: #pe-del rgba(222,60,51,.85)），hover 时补满 alpha
+pub const DANGER: COLORREF = mix(PANEL, 222, 60, 51, 217);
+pub const DANGER_HOT: COLORREF = mix(PANEL, 222, 60, 51, 255);
 /// secondaryLabel rgba(235,235,245,.6)：状态行与次要文字。
 /// chip 叠在 CARD 上是 (144,144,151)、面板叠在 PANEL 上是 (145,145,152)，差 1 不到，
 /// 只留一个值，免得两个窗口为了这一点差别各写一套。

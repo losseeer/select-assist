@@ -66,7 +66,8 @@ thread_local! {
     static FONTS: RefCell<Vec<(i32, HFONT)>> = const { RefCell::new(Vec::new()) };
 }
 
-fn font(hwnd: HWND, pt: f32) -> HFONT {
+/// 字号对应的 HFONT。原生子控件要靠 WM_SETFONT 拿同一张表，不能只在我们自己的 DC 里选
+pub fn font(hwnd: HWND, pt: f32) -> HFONT {
     let height = -(pt * scale(hwnd)) as i32;
     FONTS.with(|f| {
         let mut fonts = f.borrow_mut();

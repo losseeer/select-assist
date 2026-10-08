@@ -21,7 +21,7 @@ use crate::views;
 use capture::{self, ClipNote};
 use ctxpack::adapters::SessionRef;
 use pack::{Pack, Payload};
-use settings::{AppSettings, PromptTemplate, SessionPath, Settings, SiteTarget};
+use settings::{self, AppSettings, PromptTemplate, SessionPath, Settings, SiteTarget};
 
 /// Electron 的轮询周期
 const POLL_SECONDS: f64 = 0.8;
@@ -32,15 +32,6 @@ const COPIED_HOLD: f64 = 1.2;
 const COPY_READ: &str = "复制 Prompt";
 const COPY_DIRECT: &str = "复制选区原文";
 const COPIED: &str = "已复制 ✓";
-/// 会话路径行的合法 agent token（与 renderer.js 的 AGENT_TOKENS 一致）
-const AGENT_TOKENS: [&str; 6] = [
-    "auto",
-    "claude-code",
-    "codex",
-    "workbuddy",
-    "qoder",
-    "project",
-];
 
 #[derive(Clone, Copy)]
 enum After {
@@ -266,7 +257,10 @@ impl Controller {
         panel: Panel,
     ) -> Retained<Self> {
         let app = file.load();
-        let sites_draft = [sites_text(&app.chat_sites), sites_text(&app.direct_sites)];
+        let sites_draft = [
+            settings::sites_text(&app.chat_sites),
+            settings::sites_text(&app.direct_sites),
+        ];
         let prompts = app.prompts.clone();
         // 编辑器打开时停在正在用的那条指令上
         let edit_index = app.active_prompt;
@@ -799,8 +793,8 @@ impl Controller {
     fn sync_dirty(&self) {
         let ivars = self.ivars();
         let panel = &ivars.panel;
-        let (paths, _) = parse_session_paths(&panel.session_paths_text());
-        let (sites, _) = parse_sites(&panel.sites_text());
+        let (paths, _) = settings::parse_session_paths(&panel.session_paths_text());
+        let (sites, _) = settings::parse_sites(&panel.sites_text());
         let saved = ivars.state.borrow().app.clone();
         // 只读不写：以前这里是先 commit_template() 把编辑框折回草稿再比，而启动时
         // sync_from_state 跑在 reload_prompt_editor 之前，编辑框还是空的 —— 于是把草稿里
@@ -859,8 +853,8 @@ impl Controller {
             .filter(|p| !p.name.is_empty() && !p.template.is_empty())
             .cloned()
             .collect();
-        let (paths, bad_paths) = parse_session_paths(&panel_text.0);
-        let (sites, bad_sites) = parse_sites(&panel_text.1);
+        let (paths, bad_paths) = settings::parse_session_paths(&panel_text.0);
+        let (sites, bad_sites) = settings::parse_sites(&panel_text.1);
         let read = state.app.with_context;
 
         if !prompts.is_empty() {
@@ -901,7 +895,7 @@ impl Controller {
         } else {
             self.flash(&format!(
                 "无效行（站点需 名称|http(s)://URL，路径需 {}|路径）：{}，未生效",
-                AGENT_TOKENS.join("/"),
+                settings::AGENT_TOKENS.join("/"),
                 warn.join("，")
             ));
         }
@@ -1028,104 +1022,7 @@ fn joined(rows: &[usize]) -> String {
         .join("、")
 }
 
-fn sites_text(sites: &[SiteTarget]) -> String {
-    sites
-        .iter()
-        .map(|s| format!("{}|{}", s.name, s.url))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// 每行 `第一段|第二段`：跳过空行，交出 (1 起的行号, 两段)；没有竖线时第二段是空串
-fn split_pairs(text: &str) -> Vec<(usize, String, String)> {
-    text.lines()
-        .enumerate()
-        .filter(|(_, line)| !line.trim().is_empty())
-        .map(|(index, line)| {
-            let parts: Vec<&str> = line.split('|').collect();
-            (
-                index + 1,
-                parts[0].trim().to_string(),
-                parts
-                    .get(1)
-                    .map(|p| p.trim())
-                    .unwrap_or_default()
-                    .to_string(),
-            )
-        })
-        .collect()
-}
-
-/// 每行 `agent|路径`，坏行记下来但不打断其它行
-fn parse_session_paths(text: &str) -> (Vec<SessionPath>, Vec<usize>) {
-    let mut out = Vec::new();
-    let mut bad = Vec::new();
-    for (line, agent, path) in split_pairs(text) {
-        let agent = agent.to_lowercase();
-        if AGENT_TOKENS.contains(&agent.as_str()) && !path.is_empty() {
-            out.push(SessionPath { agent, path });
-        } else {
-            bad.push(line);
-        }
-    }
-    (out, bad)
-}
-
-/// 每行 `名称|http(s)://URL`
-fn parse_sites(text: &str) -> (Vec<SiteTarget>, Vec<usize>) {
-    let mut out = Vec::new();
-    let mut bad = Vec::new();
-    for (line, name, url) in split_pairs(text) {
-        if !name.is_empty() && has_http_scheme(&url) {
-            out.push(SiteTarget { name, url });
-        } else {
-            bad.push(line);
-        }
-    }
-    (out, bad)
-}
-
-/// 对应 renderer.js 的 `/^https?:\/\//i`：大写协议同样算数
-fn has_http_scheme(url: &str) -> bool {
-    let lowered = url.to_ascii_lowercase();
-    lowered.starts_with("http://") || lowered.starts_with("https://")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn session_path_lines_parse_like_the_renderer() {
-        let (paths, bad) = parse_session_paths(
-            "qoder|/tmp/a\nproject|/tmp/b\nbogus|/x\n\nAUTO|/tmp/c\nCodex|/tmp/d\n没有竖线",
-        );
-        assert_eq!(paths.len(), 4);
-        assert_eq!(paths[0].agent, "qoder");
-        assert_eq!(paths[1].agent, "project");
-        assert_eq!(paths[2].agent, "auto", "agent 段大小写不敏感");
-        assert_eq!(paths[3].agent, "codex");
-        assert_eq!(bad, vec![3, 7], "空行跳过，坏行报原始行号");
-    }
-
-    #[test]
-    fn site_lines_need_a_name_and_an_http_url() {
-        let (sites, bad) = parse_sites("Google|https://www.google.com/\n坏行 no pipe\nfile|file:///etc/hosts\nDeepL|http://www.deepl.com");
-        assert_eq!(sites.len(), 2);
-        assert_eq!(bad, vec![2, 3]);
-    }
-
-    #[test]
-    fn an_uppercase_scheme_is_still_a_site() {
-        // renderer.js 用 /^https?:\/\//i，大写不能算坏行
-        let (sites, bad) = parse_sites(
-            "Google|HTTPS://www.google.com/\nBing|HTTP://www.bing.com/\n|https://缺名字.com/",
-        );
-        assert_eq!(bad, vec![3]);
-        assert_eq!(
-            sites[0].url, "HTTPS://www.google.com/",
-            "URL 原样存，不改写大小写"
-        );
-        assert_eq!(sites[1].name, "Bing");
-    }
 }

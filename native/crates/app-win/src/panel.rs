@@ -16,9 +16,10 @@ use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
 use crate::draw::{self, RectF};
 use crate::theme::{
-    ACCENT, ACCENT_HOVER, ACCENT_SOFT, BROWSE_ROW, CARD, CTRL_H, DIM, FAINT, FIELD, FILL, GAP,
-    HAIRLINE, ICON, INK, LINE_H, PAD_BOTTOM, PAD_TOP, PAD_X, ROW_GAP, R_CTRL, R_FIELD, S1, S2,
-    TRACK, T_BODY, T_HEAD, T_META, WARN, WHITE, WIDTH,
+    ACCENT, ACCENT_HOVER, ACCENT_SOFT, BROWSE_ROW, CARD, CTRL_H, DANGER, DANGER_HOT, DIM, DOT,
+    FAINT, FIELD, FIELD_H, FILL, GAP, HAIRLINE, ICON, INK, LINE_H, PAD_BOTTOM, PAD_TOP, PAD_X,
+    ROW_GAP, R_CTRL, R_FIELD, S1, S2, SESSIONS_H, TRACK, T_BODY, T_HEAD, T_META, WARN, WHITE,
+    WIDTH,
 };
 
 /// 可点的东西。shell.rs 拿这个名字去分派动作，所以这里每加一个 id 就必须在那边加一个
@@ -64,6 +65,15 @@ pub struct PanelView {
     pub hover: Option<Id>,
     /// 悬停在哪一行会话上（hover 只带一个名字，行号得另说）
     pub hover_row: Option<usize>,
+    // ---- 设置组（M4d）----
+    pub settings_open: bool,
+    pub dirty: bool,
+    pub redact: bool,
+    /// 正在编辑第几条指令（草稿里的一条）
+    pub prompt_index: usize,
+    pub prompt_count: usize,
+    /// 设置组里那三个标签的文案，由 shell 按当前模式算好
+    pub sites_label: String,
 }
 
 /// 一帧的绘制上下文：DC、DPI 换算、以及边走边收集的命中表。
@@ -330,6 +340,167 @@ fn browser(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
     y + field.height()
 }
 
+/// 设置披露行：裸字 + 三角，不铺底（CSS 的 #settings summary）
+fn settings_toggle(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
+    let glyph = if v.settings_open { "▾" } else { "▸" };
+    let label = format!("{glyph}  设置");
+    let w = p.pill_width(&label) - 24.0;
+    let r = RectF::new(PAD_X, y, w.max(72.0), CTRL_H);
+    p.line(&label, r, DIM, T_BODY, LEFT);
+    p.hits.push(Hit {
+        id: "settings",
+        r,
+        idx: None,
+    });
+    y + CTRL_H
+}
+
+fn label_row(p: &Pen, body_w: f32, text: &str, y: f32) -> f32 {
+    p.line(
+        text,
+        RectF::new(PAD_X, y, body_w, LINE_H),
+        DIM,
+        T_BODY,
+        LEFT,
+    );
+    y + LINE_H + S1
+}
+
+/// 一个字段框：只画底 + 登记位置，真正的文本是覆盖在它上面的原生 EDIT
+fn field_box(p: &mut Pen, id: Id, y: f32, h: f32) -> f32 {
+    let r = RectF::new(PAD_X, y, WIDTH - 2.0 * PAD_X, h);
+    p.round(r, R_FIELD, FIELD);
+    p.hits.push(Hit { id, r, idx: None });
+    y + h + GAP
+}
+
+/// 设置编辑器。三个多行文本框本身是原生 EDIT 子窗口，这里只负责留出它们的位置
+/// （shell.rs 按 rect_of 把子窗口摆过来），所以字段区只画底和标签。
+fn settings_editor(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
+    let body_w = WIDTH - 2.0 * PAD_X;
+
+    let mut y = label_row(p, body_w, "提问指令", y);
+    // 指令条：选择器 + 新建 / 删除 + 「第 i/n 条」
+    let pick_w = 120.0;
+    p.button(
+        "prompt-pick",
+        &format!("指令 {} ▾", (v.prompt_index + 1).min(v.prompt_count)),
+        PAD_X,
+        y,
+        pick_w,
+        v.hover == Some("prompt-pick"),
+    );
+    let new_w = p.pill_width("+ 新建");
+    p.button(
+        "prompt-new",
+        "+ 新建",
+        PAD_X + pick_w + GAP,
+        y,
+        new_w,
+        v.hover == Some("prompt-new"),
+    );
+    let del_w = p.pill_width("删除");
+    let del_x = PAD_X + pick_w + GAP + new_w + GAP;
+    let r = RectF::new(del_x, y, del_w, CTRL_H);
+    p.round(
+        r,
+        R_CTRL,
+        if v.hover == Some("prompt-del") {
+            DANGER_HOT
+        } else {
+            DANGER
+        },
+    );
+    p.line("删除", r, WHITE, T_BODY, CENTER);
+    p.hits.push(Hit {
+        id: "prompt-del",
+        r,
+        idx: None,
+    });
+    p.line(
+        &format!(
+            "{} / 共 {} 条",
+            (v.prompt_index + 1).min(v.prompt_count),
+            v.prompt_count
+        ),
+        RectF::new(PAD_X, y, body_w, CTRL_H),
+        FAINT,
+        T_META,
+        RIGHT,
+    );
+    y += CTRL_H + GAP;
+    y = field_box(p, "field-template", y, FIELD_H);
+
+    let mut y = label_row(p, body_w, "会话路径", y);
+    p.line(
+        "每行：agent|路径；发现只读这里，删一行即停扫该源",
+        RectF::new(PAD_X, y, body_w, LINE_H - 2.0),
+        FAINT,
+        T_META,
+        LEFT,
+    );
+    y += LINE_H + S1;
+    y = field_box(p, "field-sessions", y, SESSIONS_H);
+
+    // 脱敏开关：轨道 + 滑块 + 一句标签，点整行都算
+    let track = RectF::new(PAD_X, y + (CTRL_H - 18.0) / 2.0, 34.0, 18.0);
+    p.round(track, 9.0, if v.redact { ACCENT } else { FILL });
+    let knob = RectF::new(
+        if v.redact {
+            track.right - 16.0
+        } else {
+            track.left + 2.0
+        },
+        track.top + 2.0,
+        14.0,
+        14.0,
+    );
+    p.round(knob, 7.0, WHITE);
+    p.line(
+        "路径脱敏",
+        RectF::new(track.right + GAP, y, body_w - track.width() - GAP, CTRL_H),
+        DIM,
+        T_BODY,
+        LEFT,
+    );
+    p.hits.push(Hit {
+        id: "redact",
+        r: RectF::new(PAD_X, y, body_w, CTRL_H),
+        idx: None,
+    });
+    y += CTRL_H + ROW_GAP;
+
+    let mut y = label_row(p, body_w, &v.sites_label, y);
+    p.line(
+        "每行：名称|URL",
+        RectF::new(PAD_X, y, body_w, LINE_H - 2.0),
+        FAINT,
+        T_META,
+        LEFT,
+    );
+    y += LINE_H + S1;
+    y = field_box(p, "field-sites", y, FIELD_H);
+
+    // 保存：脏了点一下才落盘，旁边一枚 warn 色的小点表示有未保存的改动
+    let save_w = p.pill_width("保存设置");
+    p.button(
+        "save",
+        "保存设置",
+        PAD_X,
+        y,
+        save_w,
+        v.hover == Some("save"),
+    );
+    if v.dirty {
+        p.round(
+            RectF::new(PAD_X + save_w + GAP, y + (CTRL_H - DOT) / 2.0, DOT, DOT),
+            DOT / 2.0,
+            WARN,
+        );
+    }
+    y + CTRL_H
+}
+
 /// 输出组：指令下拉 + 复制 + 站点按钮
 fn output(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
     let copy_label = if v.copied { "已复制 ✓" } else { "复制" };
@@ -392,6 +563,11 @@ impl Layout {
             .find(|h| h.r.contains(x, y))
             .map(|h| (h.id, h.idx))
     }
+
+    /// 某个区域画在了哪儿（DIP）。shell.rs 用它把三个原生 EDIT 摆进字段框
+    pub fn rect_of(&self, id: Id) -> Option<RectF> {
+        self.hits.iter().find(|h| h.id == id).map(|h| h.r)
+    }
 }
 
 /// 画一帧，返回命中表与内容应有的高度
@@ -440,6 +616,12 @@ pub fn paint(hwnd: HWND, v: &PanelView) -> Layout {
             HAIRLINE,
         );
         y = output(&mut p, v, y);
+        if v.settings_open || !v.pack_meta.is_empty() {
+            p.fill(
+                RectF::new(PAD_X, y + GAP - ROW_GAP / 2.0, WIDTH - 2.0 * PAD_X, 1.0),
+                HAIRLINE,
+            );
+        }
         if !v.pack_meta.is_empty() {
             y += GAP;
             p.line(
@@ -450,6 +632,15 @@ pub fn paint(hwnd: HWND, v: &PanelView) -> Layout {
                 LEFT,
             );
             y += LINE_H;
+        }
+        y = if v.pack_meta.is_empty() {
+            y + GAP
+        } else {
+            y + ROW_GAP
+        };
+        y = settings_toggle(&mut p, v, y) + GAP;
+        if v.settings_open {
+            y = settings_editor(&mut p, v, y);
         }
         let height = y + PAD_BOTTOM;
 

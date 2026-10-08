@@ -9,6 +9,8 @@ mod clip;
 #[cfg(windows)]
 mod draw;
 #[cfg(windows)]
+mod edits;
+#[cfg(windows)]
 mod paint;
 #[cfg(windows)]
 mod panel;
