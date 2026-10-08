@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 ctxpack = { path = "../ctxpack" }
+pack = { path = "../pack" }
 capture = { path = "../capture" }
 settings = { path = "../settings" }
 serde = { version = "1", features = ["derive"] }

@@ -1,6 +1,5 @@
 mod app;
 mod chip;
-mod context;
 mod flipped;
 mod geo;
 mod panel;

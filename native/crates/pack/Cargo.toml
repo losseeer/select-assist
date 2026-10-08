@@ -1,0 +1,16 @@
+[package]
+name = "pack"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# 会话上下文的一条完整链路：发现会话 → 挑会话 → 读 transcript → clean/v1 渲染 → 组装 Prompt。
+# 除了取一次 home 之外没有任何平台调用，mac 与 Windows 两个外壳共用它，壳只负责把结果画出来。
+[dependencies]
+capture = { path = "../capture" }
+ctxpack = { path = "../ctxpack" }
+settings = { path = "../settings" }
+dirs = "6"
+
+[dev-dependencies]
+test-support = { path = "../test-support" }

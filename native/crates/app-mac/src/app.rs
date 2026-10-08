@@ -14,13 +14,13 @@ use objc2_app_kit::{NSApplication, NSButton, NSWindow, NSWindowDelegate};
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSTimer};
 
 use crate::chip::{self, Chip};
-use crate::context::{self, Pack, Payload};
 use crate::geo::{Geometry, Rect};
 use crate::panel::{Panel, Row};
 use crate::pasteboard;
 use crate::views;
 use capture::{self, ClipNote};
 use ctxpack::adapters::SessionRef;
+use pack::{Pack, Payload};
 use settings::{AppSettings, PromptTemplate, SessionPath, Settings, SiteTarget};
 
 /// Electron 的轮询周期
@@ -753,7 +753,7 @@ impl Controller {
         ivars.panel.redraw();
 
         let settings = ivars.state.borrow().app.clone();
-        let refs = context::browse(&settings, context::BROWSE_LIMIT);
+        let refs = pack::browse(&settings, pack::BROWSE_LIMIT);
         // 手动挑过的那条要在列表里打勾：.db 文件里几十个会话共用同一个路径，得连会话 id 一起比
         let selected = ivars.state.borrow().browsing.as_ref().and_then(|b| {
             refs.iter()
