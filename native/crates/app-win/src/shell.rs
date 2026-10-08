@@ -117,6 +117,11 @@ struct Ui {
     /// 实测过：在会话解读里改的站点，切到直通保存后进了 directSites，chatSites 原样没动，
     /// 而 Google/BingCN 两条被覆盖掉了。这份文件 Electron 也在读，等于毁掉用户的配置。
     sites_draft: [String; 2],
+    /// 指令列表的草稿（mac 的 state.prompts 同构，跟 app.prompts 分开）。
+    /// 不分家的时候"新建"出来的空指令会被下一个下拉操作 persist_settings 顺手写进
+    /// settings.json —— 用户从没点过保存，Electron 那边却多了一条空指令；
+    /// "删除"同理，没保存就先少一条。保存那一刻才把草稿过滤掉空条目后写回。
+    draft_prompts: Vec<settings::PromptTemplate>,
 }
 
 thread_local! {
@@ -149,6 +154,7 @@ thread_local! {
         dirty: false,
         draft_prompt: 0,
         sites_draft: [String::new(), String::new()],
+        draft_prompts: Vec::new(),
     });
 }
 
@@ -225,7 +231,15 @@ pub fn run() -> windows::core::Result<()> {
     UI.with(|u| u.borrow_mut().hwnd = hwnd);
     // 设置只在启动时读一次：M4 加设置界面后改成每次用时现读
     let settings = store().load();
-    UI.with(|u| u.borrow_mut().settings = settings);
+    UI.with(|u| {
+        let mut ui = u.borrow_mut();
+        // 草稿从已保存的那份起步（mac 的 state.prompts = app.prompts 同一步）
+        ui.draft_prompts = settings.prompts.clone();
+        ui.draft_prompt = settings
+            .active_prompt
+            .min(settings.prompts.len().saturating_sub(1));
+        ui.settings = settings;
+    });
     if !clip::watch(hwnd) {
         println!("剪贴板监听注册失败，未读点不会亮");
     }
@@ -363,9 +377,14 @@ fn capture_selection(hwnd: HWND) {
         ui.error = None;
         let settings = ui.settings.clone();
         if settings.with_context {
-            // agent 先固定 auto：面板的会话下拉是 M4 的事，那时换成 panel 选中的 token
+            // 用面板上选中的 agent，不再写死 "auto"：写死的时候下拉选了 codex、
+            // 点「取入选区」却挂上一条 Qoder 会话，状态行跟下拉互相矛盾。
+            // 新选区也不该沿用上一次在浏览器里挑的那条会话（mac 在取入时清 browsing
+            // 并 attach(None)），所以这里同样清掉选中项、按 agent 重新找
+            let agent = ui.agent.clone();
+            ui.browser_sel = None;
             ui.pack
-                .attach(&settings, "auto", settings.context_turns, None, None);
+                .attach(&settings, &agent, settings.context_turns, None, None);
         }
         ui.payload = ui.pack.payload(&settings);
     });
@@ -592,7 +611,7 @@ fn panel_view(ui: &Ui) -> panel::PanelView {
         // 写 active_prompt 的话，上面那个下拉一切换，设置组就改成"指令 3 / 共 3 条"，
         // 而框里仍然是指令 1 的模板，保存进的是指令 1 —— 标签在骗人
         prompt_index: ui.draft_prompt,
-        prompt_count: ui.settings.prompts.len(),
+        prompt_count: ui.draft_prompts.len(),
         sites_label: if ui.settings.with_context {
             "会话解读目标站".into()
         } else {
@@ -893,8 +912,8 @@ fn menu_for(ui: &Ui, id: &'static str) -> Option<(Vec<String>, usize)> {
         "prompt-pick" => {
             let current = ui
                 .draft_prompt
-                .min(ui.settings.prompts.len().saturating_sub(1));
-            let names: Vec<String> = ui.settings.prompts.iter().map(|p| p.name.clone()).collect();
+                .min(ui.draft_prompts.len().saturating_sub(1));
+            let names: Vec<String> = ui.draft_prompts.iter().map(|p| p.name.clone()).collect();
             Some((names, current))
         }
         // 没有兜底：命中表里新加一个 id 而忘了在这里加分支，编译期就要说清楚
@@ -922,7 +941,7 @@ fn apply_pick(ui: &mut Ui, id: &'static str, index: usize) -> bool {
             ui.settings.active_prompt = index;
         }
         "prompt-pick" => {
-            if index >= ui.settings.prompts.len() {
+            if index >= ui.draft_prompts.len() {
                 return false;
             }
             ui.draft_prompt = index;
@@ -1050,9 +1069,11 @@ unsafe extern "system" fn panel_wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPAR
                 (want, rc.bottom)
             };
             let _ = ValidateRect(Some(hwnd), None);
-            if UI.with(|u| u.borrow().settings_open) {
-                unsafe { edits::place(field_rects(hwnd)) };
-            }
+            // 每帧都摆一次，包括设置组收起的时候：place 拿到的是这一帧注册过的字段框，
+            // 没注册就是 None -> SW_HIDE。只在 settings_open 时调的话，收起设置组
+            // 只是不再画那几行，三个原生 EDIT 还浮在原位继续吃键盘 ——
+            // 而窗口高度被工作区夹住时根本不会缩，遮不住
+            unsafe { edits::place(field_rects(hwnd)) };
             // 内容高度要等画完才知道，所以这一帧之后再调一次尺寸。
             // 夹两件事：高度不超过所在屏的工作区（超出的靠滚动看到），以及装不下时把窗口
             // 往上挪 —— 拖到屏幕下沿外面的 ✕ 和「保存设置」是点不到的
@@ -1301,7 +1322,13 @@ unsafe fn toggle_settings(chip: HWND) {
         let mut ui = u.borrow_mut();
         ui.settings_open = !ui.settings_open;
         if ui.settings_open {
-            ui.draft_prompt = ui.settings.active_prompt;
+            // 从"生效中"的那条起步，但必须夹在草稿列表的范围里：
+            // 新建两条又没保存、期间删掉一条的话，这里会指到列表外面去，
+            // 于是框里是空的、保存又被 get_mut 静默丢掉，用户只看到"已保存"
+            ui.draft_prompt = ui
+                .settings
+                .active_prompt
+                .min(ui.draft_prompts.len().saturating_sub(1));
         }
         ui.settings_open
     });
@@ -1337,8 +1364,7 @@ unsafe fn seed_edits() {
 impl Ui {
     fn clone_draft(&self) -> (String, String, String) {
         let template = self
-            .settings
-            .prompts
+            .draft_prompts
             .get(self.draft_prompt)
             .map(|p| p.template.clone())
             .unwrap_or_default();
@@ -1384,16 +1410,17 @@ unsafe fn toggle_redact(chip: HWND) {
 unsafe fn new_prompt(chip: HWND) {
     UI.with(|u| {
         let mut ui = u.borrow_mut();
-        // 取一个没被占用的编号：直接 len+1 在删过一条之后会造出两条同名"指令 2"
-        let used: Vec<String> = ui.settings.prompts.iter().map(|p| p.name.clone()).collect();
+        // 取一个没被占用的编号：直接 len+1 在删过一条之后会造出两条同名"指令 2"。
+        // 查草稿而不是查已保存的那份 —— 用户眼里看到的就是草稿
+        let used: Vec<String> = ui.draft_prompts.iter().map(|p| p.name.clone()).collect();
         let n = (1..)
             .find(|k| !used.contains(&format!("指令 {k}")))
             .unwrap_or(1);
-        ui.settings.prompts.push(settings::PromptTemplate {
+        ui.draft_prompts.push(settings::PromptTemplate {
             name: format!("指令 {n}"),
             template: "{selection}".into(),
         });
-        ui.draft_prompt = ui.settings.prompts.len() - 1;
+        ui.draft_prompt = ui.draft_prompts.len() - 1;
         ui.dirty = true;
     });
     seed_edits();
@@ -1403,21 +1430,69 @@ unsafe fn new_prompt(chip: HWND) {
 unsafe fn del_prompt(chip: HWND) {
     let removed = UI.with(|u| {
         let mut ui = u.borrow_mut();
-        if ui.settings.prompts.len() <= 1 {
-            flash(chip, "至少保留一条指令");
+        if ui.draft_prompts.len() <= 1 {
             return false;
         }
-        let at = ui.draft_prompt.min(ui.settings.prompts.len() - 1);
-        ui.settings.prompts.remove(at);
+        let at = ui.draft_prompt.min(ui.draft_prompts.len() - 1);
+        ui.draft_prompts.remove(at);
         ui.draft_prompt = at.saturating_sub(1);
         ui.dirty = true;
         true
     });
     if !removed {
+        // flash 自己也要 borrow_mut，放在上面那个闭包里就是"already mutably borrowed"
+        // 直接 panic 穿wndproc —— 进程当场没了。默认设置只有一条指令，
+        // 所以"开设置 -> 删除"是开机一分钟内就能撞到的崩溃，mac 那边是先 drop(state) 再提示
+        flash(chip, "至少保留一条指令");
         return;
     }
     seed_edits();
     repaint(chip);
+}
+
+/// 把三个框的内容落到状态上。单独拎成一个纯函数是为了能测：这一步每一步都在改
+/// 那份 Electron 也读的 settings.json，出错的方式是"用户的配置被静默换掉"，不是崩。
+///
+/// 三条判据都来自 mac 的 save_settings：模板先 trim；名字或模板为空的草稿条目不上盘；
+/// 站点整框都是坏行时保留原列表（报的文案是"这些行未生效"，换空了就言行不一致）。
+fn apply_save(
+    ui: &mut Ui,
+    template: &str,
+    paths: Vec<settings::SessionPath>,
+    sites: Vec<settings::SiteTarget>,
+    read: bool,
+) {
+    let at = ui
+        .draft_prompt
+        .min(ui.draft_prompts.len().saturating_sub(1));
+    ui.draft_prompt = at;
+    if let Some(prompt) = ui.draft_prompts.get_mut(at) {
+        prompt.template = template.trim().to_string();
+    }
+    let kept: Vec<settings::PromptTemplate> = ui
+        .draft_prompts
+        .iter()
+        .filter(|p| !p.name.trim().is_empty() && !p.template.trim().is_empty())
+        .cloned()
+        .collect();
+    if !kept.is_empty() {
+        ui.draft_prompt = ui.draft_prompt.min(kept.len() - 1);
+        ui.draft_prompts = kept.clone();
+        ui.settings.prompts = kept;
+        ui.settings.active_prompt = ui
+            .settings
+            .active_prompt
+            .min(ui.settings.prompts.len().saturating_sub(1));
+    }
+    ui.settings.session_paths = paths;
+    if !sites.is_empty() {
+        if read {
+            ui.settings.chat_sites = sites;
+        } else {
+            ui.settings.direct_sites = sites;
+        }
+    }
+    ui.dirty = false;
 }
 
 /// 保存：三个框读回来按行解析，坏行只报行号、不清空其它行；
@@ -1437,20 +1512,7 @@ unsafe fn save_settings(chip: HWND) {
     // 框里的文字留在本模式的草稿槽里：保存不等于丢弃编辑历史，
     // 下一次切回来看到的仍然是自己打的那几行
     UI.with(|u| u.borrow_mut().sites_draft[usize::from(!read)] = sites_text.clone());
-    UI.with(|u| {
-        let mut ui = u.borrow_mut();
-        let at = ui.draft_prompt;
-        if let Some(prompt) = ui.settings.prompts.get_mut(at) {
-            prompt.template = template;
-        }
-        ui.settings.session_paths = paths;
-        if read {
-            ui.settings.chat_sites = sites;
-        } else {
-            ui.settings.direct_sites = sites;
-        }
-        ui.dirty = false;
-    });
+    UI.with(|u| apply_save(&mut u.borrow_mut(), &template, paths, sites, read));
     let now = UI.with(|u| u.borrow().settings.clone());
     if let Err(e) = store().save(&now) {
         flash(chip, &format!("保存设置失败：{e}"));
@@ -1501,7 +1563,17 @@ mod tests {
 
     /// thread_local 每线程一份，测试各拿各的 Ui，不会互相踩
     fn with_ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R {
-        UI.with(|u| f(&mut u.borrow_mut()))
+        UI.with(|u| {
+            let mut ui = u.borrow_mut();
+            // 跟 run() 里读盘之后那一步同构：草稿从已保存的那份起步，
+            // 否则测试面对的是一个程序里不会出现的状态
+            ui.draft_prompts = ui.settings.prompts.clone();
+            ui.draft_prompt = ui
+                .settings
+                .active_prompt
+                .min(ui.draft_prompts.len().saturating_sub(1));
+            f(&mut ui)
+        })
     }
 
     #[test]
@@ -1546,7 +1618,7 @@ mod tests {
     #[test]
     fn prompt_pick_moves_the_draft_not_the_active_one() {
         with_ui(|u| {
-            u.settings.prompts.push(settings::PromptTemplate {
+            u.draft_prompts.push(settings::PromptTemplate {
                 name: "另一条".into(),
                 template: "{selection}!".into(),
             });
@@ -1556,6 +1628,78 @@ mod tests {
             assert_eq!(u.settings.active_prompt, 0, "没保存就不该改到生效中的那条");
             assert!(u.dirty);
             assert!(!apply_pick(u, "prompt-pick", 9));
+        });
+    }
+
+    /// 草稿列表不能越界：越界了 clone_draft 交出空串、apply_save 的 get_mut 静默丢掉，
+    /// 用户看到"已保存"而改动没了
+    #[test]
+    fn the_draft_index_stays_inside_the_draft_list() {
+        with_ui(|u| {
+            u.draft_prompts.push(settings::PromptTemplate {
+                name: "指令 2".into(),
+                template: "第二条".into(),
+            });
+            u.draft_prompt = 1;
+            u.draft_prompts.remove(1);
+            // 模拟"打开设置组"这一步的夹取
+            u.draft_prompt = u
+                .settings
+                .active_prompt
+                .min(u.draft_prompts.len().saturating_sub(1));
+            assert_eq!(u.draft_prompt, 0);
+            assert_eq!(u.clone_draft().0, u.draft_prompts[0].template);
+        });
+    }
+
+    /// 站点框整框都是坏行时，保存不能把用户的列表换成空的 ——
+    /// 报的文案是"这些行未生效"，换成空列表就是言行不一致，而且这份文件 Electron 也在读
+    #[test]
+    fn an_unparseable_site_list_does_not_wipe_the_old_one() {
+        with_ui(|u| {
+            let before = u.settings.chat_sites.clone();
+            assert!(!before.is_empty());
+            let (sites, bad) = settings::parse_sites("没协议的站点|example.com");
+            assert!(sites.is_empty());
+            assert_eq!(bad, vec![1]);
+            let paths = u.settings.session_paths.clone();
+            apply_save(u, "模板", paths, sites, true);
+            assert_eq!(u.settings.chat_sites, before, "一行都没解析出来就保留原样");
+        });
+    }
+
+    /// 保存那一刻才把草稿发布到 settings.prompts，并且空条目不上盘、下标跟着夹
+    #[test]
+    fn saving_publishes_the_draft_and_drops_empty_entries() {
+        with_ui(|u| {
+            u.draft_prompts.push(settings::PromptTemplate {
+                name: "指令 2".into(),
+                template: String::new(),
+            });
+            u.settings.active_prompt = 9;
+            let paths = u.settings.session_paths.clone();
+            apply_save(
+                u,
+                "  带空白的模板  ",
+                paths,
+                u.settings.chat_sites.clone(),
+                true,
+            );
+            assert_eq!(
+                u.draft_prompts.len(),
+                1,
+                "模板为空的那条不该上盘，也不该留在草稿里"
+            );
+            assert_eq!(u.settings.prompts.len(), 1);
+            assert_eq!(
+                u.settings.prompts[0].template, "带空白的模板",
+                "跟 mac 一样 trim"
+            );
+            assert_eq!(
+                u.settings.active_prompt, 0,
+                "列表短了就要夹回去，不能指着外面"
+            );
+            assert!(!u.dirty);
         });
     }
 
