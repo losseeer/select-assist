@@ -32,6 +32,7 @@ const HEIGHT: i32 = 44;
 const MARGIN_RIGHT: i32 = 16;
 const MARGIN_TOP: i32 = 60;
 const SMOKE_TIMER: usize = 0xA0;
+const HEARTBEAT: usize = 0xA1;
 
 pub fn run() -> windows::core::Result<()> {
     // 必须先于建窗：DWM 那个最小高度按物理像素算，进程不感知 DPI 就量不准
@@ -95,6 +96,25 @@ pub fn run() -> windows::core::Result<()> {
         )?;
         let _ = ShowWindow(hwnd, SW_SHOW);
     }
+    if env::var("SA_WEBVIEW").is_ok() {
+        let _ = unsafe {
+            windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+            )
+        };
+        // 页面由外部给（不写死机器路径）：SA_WEBVIEW_URL=file:///.../static/index.html#chip
+        match env::var("SA_WEBVIEW_URL").ok() {
+            Some(url) => {
+                // 用户数据目录单独放，别在 target/ 里留 WebView2 的垃圾
+                let data = std::env::temp_dir().join("sa-webview-experiment");
+                std::fs::create_dir_all(&data).ok();
+                crate::webview::start(hwnd, &data.to_string_lossy(), &url);
+                let _ = unsafe { SetTimer(Some(hwnd), HEARTBEAT, 50, None) };
+            }
+            None => println!("SA_WEBVIEW=1 但没给 SA_WEBVIEW_URL，跳过"),
+        }
+    }
     if let Some(ms) = env::var("SA_SMOKE_MS").ok().and_then(|v| v.parse().ok()) {
         let _ = unsafe { SetTimer(Some(hwnd), SMOKE_TIMER, ms, None) };
         // SetTimer 返回 0 才算失败，M0 不关心
@@ -154,7 +174,8 @@ unsafe fn report(hwnd: HWND) {
     let mut r = RECT::default();
     let _ = GetWindowRect(hwnd, &mut r);
     println!(
-        "app-win rect={}x{}@{},{} dpi={}",
+        "app-win pid={} rect={}x{}@{},{} dpi={}",
+        std::process::id(),
         r.right - r.left,
         r.bottom - r.top,
         r.left,
@@ -177,8 +198,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
         }
         // 整条 chip 都是拖拽区（对应 CSS 的 -webkit-app-region: drag）
         WM_NCHITTEST => LRESULT(HTCAPTION as isize),
-        WM_TIMER if w.0 == SMOKE_TIMER => {
-            let _ = DestroyWindow(hwnd);
+        WM_TIMER => {
+            if w.0 == SMOKE_TIMER {
+                let _ = DestroyWindow(hwnd);
+            } else if w.0 == HEARTBEAT {
+                crate::webview::tick(hwnd);
+            }
             LRESULT(0)
         }
         WM_DESTROY => {

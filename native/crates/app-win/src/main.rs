@@ -7,6 +7,8 @@
 #[cfg(windows)]
 mod shell;
 #[cfg(windows)]
+mod webview;
+#[cfg(windows)]
 fn main() -> windows::core::Result<()> {
     shell::run()
 }
