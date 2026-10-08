@@ -1,6 +1,7 @@
 //! 会话上下文：发现 → 选会话 → 读 transcript → clean/v1 渲染 → assemblePrompt。
 //! 对照 packages/panel/src/main/capture.ts（userCandidates / attachContext / currentPayload）。
 
+use crate::settings::{active_template, AppSettings};
 use ctxpack::adapters::claude_code;
 use ctxpack::adapters::codex::Codex;
 use ctxpack::adapters::qoder;
@@ -12,7 +13,6 @@ use ctxpack::prompt::AssembleInput;
 use ctxpack::types::{Capture, Selection, Source, TranscriptTurn};
 use ctxpack::utf16;
 use ctxpack::{build_pack, pick_session, redact_paths, render};
-use crate::settings::{active_template, AppSettings};
 
 /// 轮数是唯一的裁剪旋钮：任何地方都不做字符截断
 const NO_BUDGET: usize = usize::MAX;

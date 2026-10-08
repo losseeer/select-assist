@@ -1,6 +1,5 @@
 //! 与 packages/ctxpack/test/ctxpack.test.mjs 一一对应的行为规格（18 例）。
 
-
 use serde_json::json;
 
 use crate::build::{build_pack, BuildInput};

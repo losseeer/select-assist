@@ -9,7 +9,8 @@ static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// 共享 fixture 的位置：native/fixtures/，两个 crate 的测试都从这里取
 pub fn fixtures_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
         .canonicalize()
         .expect("native/fixtures 不存在")
 }
@@ -117,12 +118,12 @@ pub fn scratch_dir(tag: &str) -> PathBuf {
 
 pub fn fixture_home() -> FixtureHome {
     let home = scratch_dir("ctxpack");
-    copy_tree(
-        &fixtures_dir(),
-        &home,
-        &home.to_string_lossy(),
-    );
-    let cwd = home.join("Dev").join("prj").to_string_lossy().to_string();
+    // fixture 里的 __HOME__ 落在 JSON 字符串内部：Windows 路径的反斜杠会拼成非法 JSON 转义，
+    // 整行被 parse_json_lines 当坏行丢掉，cwd/preview 就静默变空。统一换成正斜杠形式，
+    // Windows 的路径 API 一样接受；macOS 上这次 replace 是原样返回。
+    let home_json = home.to_string_lossy().replace("\\", "/");
+    copy_tree(&fixtures_dir(), &home, &home_json);
+    let cwd = format!("{home_json}/Dev/prj");
     write_qoder_work_db(
         &home.join("Library/Application Support/QoderWork/data"),
         &cwd,

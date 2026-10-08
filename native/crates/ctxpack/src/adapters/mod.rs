@@ -65,7 +65,7 @@ pub(crate) fn sort_by_mtime(refs: &mut [SessionRef]) {
     refs.sort_by(|a, b| b.mtime_ms.total_cmp(&a.mtime_ms));
 }
 
-pub(crate) fn mtime_ms(path: &str) -> Option<f64> {
+pub fn mtime_ms(path: &str) -> Option<f64> {
     let meta = std::fs::metadata(path).ok()?;
     if !meta.is_file() {
         return None;

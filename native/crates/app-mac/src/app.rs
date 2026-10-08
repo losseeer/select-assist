@@ -16,12 +16,12 @@ use objc2_foundation::{NSNotification, NSNotificationCenter, NSObject, NSObjectP
 use crate::capture::{self, ClipNote};
 use crate::chip::{self, Chip};
 use crate::context::{self, Pack, Payload};
-use ctxpack::adapters::SessionRef;
 use crate::geo::{Geometry, Rect};
 use crate::panel::{Panel, Row};
 use crate::pasteboard;
 use crate::settings::{AppSettings, PromptTemplate, SessionPath, Settings, SiteTarget};
 use crate::views;
+use ctxpack::adapters::SessionRef;
 
 /// Electron 的轮询周期
 const POLL_SECONDS: f64 = 0.8;
