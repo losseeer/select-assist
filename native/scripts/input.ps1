@@ -71,14 +71,16 @@ public class Input {
     [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(P pt);
-    // SM_CXSCREEN / SM_CYSCREEN：主屏像素尺寸。用 P/Invoke 而不是 WinForms，
-    // 因为 Add-Type -TypeDefinition 不会把会话里已加载的 WinForms.dll 带进编译引用
     [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
     [StructLayout(LayoutKind.Sequential)] public struct P { public int x, y; }
 
     const uint INPUT_MOUSE = 0, INPUT_KEYBOARD = 1;
     const uint MOUSEEVENTF_MOVE = 0x0001, LEFTDOWN = 0x0002, LEFTUP = 0x0004;
     const uint WHEEL = 0x0800, VIRTUALDESK = 0x4000;
+    // 0x8000。少了它，dx/dy 是**相对位移**而不是归一化坐标：往 (320,142) "移动"
+    // 实际发出去的是"向右 1 万像素"，光标被钉在屏幕右下角，而 SendInput 照样返回成功。
+    // 这就是这轮真实输入一开始全点空、以及 shell.rs 里"本机合成鼠标不可靠"那句话的成因。
+    const uint ABSOLUTE = 0x8000;
     const uint KEYDOWN = 0x0000, KEYUP = 0x0002, UNICODE = 0x0004;
 
     static INPUT Mouse(uint flags, int dx, int dy, uint data) {
@@ -88,18 +90,24 @@ public class Input {
         return i;
     }
 
-    /// 绝对屏幕坐标要归一化到 0..65535，否则 -Real 的点击会落在别处
+    /// 绝对屏幕坐标要归一化到 0..65535，并且分母要用**虚拟桌面**（所有显示器拼起来
+    /// 那张）的尺寸与原点，不是主屏。这台机器是 1920+1920 横排，用主屏尺寸会把落点整体放大一倍。
     static void Absolute(ref INPUT i, int x, int y) {
-        i.u.mi.dx = (int)(((long)x * 65535) / (GetSystemMetrics(0) - 1));
-        i.u.mi.dy = (int)(((long)y * 65535) / (GetSystemMetrics(1) - 1));
-        i.u.mi.dwFlags |= VIRTUALDESK;
+        i.u.mi.dx = (int)(((long)(x - vx()) * 65535) / (vw() - 1));
+        i.u.mi.dy = (int)(((long)(y - vy()) * 65535) / (vh() - 1));
+        i.u.mi.dwFlags |= ABSOLUTE | VIRTUALDESK;
     }
+    static int vx() { return GetSystemMetrics(76); }
+    static int vy() { return GetSystemMetrics(77); }
+    static int vw() { return GetSystemMetrics(78); }
+    static int vh() { return GetSystemMetrics(79); }
 
     public static void RealMove(int x, int y) {
         INPUT[] a = new INPUT[1];
         a[0] = Mouse(MOUSEEVENTF_MOVE, 0, 0, 0);
         Absolute(ref a[0], x, y);
-        SendInput(1, a, Marshal.SizeOf(typeof(INPUT)));
+        uint n = SendInput(1, a, Marshal.SizeOf(typeof(INPUT)));
+        if (n != 1) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
     }
     public static void RealDown() {
         INPUT[] a = new INPUT[1]; a[0] = Mouse(LEFTDOWN, 0, 0, 0);
@@ -134,7 +142,12 @@ public class Input {
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
     public static bool Post(IntPtr h, uint msg, IntPtr w, IntPtr l) { return PostMessage(h, msg, w, l); }
     public static IntPtr TopAt(int x, int y) { P p = new P(); p.x = x; p.y = y; return WindowFromPoint(p); }
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    public static IntPtr Fg() { return GetForegroundWindow(); }
     public static void Get(out int x, out int y) { P p; GetCursorPos(out p); x = p.x; y = p.y; }
+    /// 按值返回而不是 out：PowerShell 拿 [ref] 绑结构体的**字段**会拷一份走，
+    /// 读回来的永远是 0,0（原来的 -Real 就是这么"还原"光标的，等于每步都把光标甩到左上角）
+    public static P Cur() { P p; GetCursorPos(out p); return p; }
 }
 '@
 Add-Type -TypeDefinition $src
@@ -153,6 +166,17 @@ function Pack-Client([int]$cx, [int]$cy) {
 }
 function Pack-Screen([int]$sx, [int]$sy) { [IntPtr](($sy -shl 16) -band 0xFFFF0000 -bor ($sx -band 0xFFFF)) }
 
+# 真实移动之后要回读光标实际落在哪："我以为点的是 x,y"和"系统真把光标放到了 x,y"
+# 是两件事，而只有后者决定命中测试的结果。偏得多就直接失败，不许继续装作成功。
+function Move-Real([int]$tx, [int]$ty) {
+    [Input]::RealMove($tx, $ty)
+    $c = [Input]::Cur()
+    if ([Math]::Abs($c.x - $tx) -gt 2 -or [Math]::Abs($c.y - $ty) -gt 2) {
+        throw "真实移动落点不符：期望 $tx,$ty，实际 $($c.x),$($c.y)"
+    }
+    return $c
+}
+
 $WM_MOUSEMOVE = 0x0200; $WM_LBUTTONDOWN = 0x0201; $WM_LBUTTONUP = 0x0202
 $WM_MOUSEWHEEL = 0x020A; $WM_NCHITTEST = 0x0084
 $MK_LBUTTON = 1
@@ -169,16 +193,15 @@ function Test-Abort {
 }
 Test-Abort
 
-$before = New-Object System.Drawing.Point
-[Input]::Get([ref]$before.x, [ref]$before.y) | Out-Null
+$before = [Input]::Cur()
 
 try {
     switch ($Action) {
         'move' {
             if ($Real) {
                 $sp = Get-ScreenPoint $Hwnd $X $Y
-                [Input]::RealMove($sp.x, $sp.y)
-                "real move -> screen $($sp.x),$($sp.y)"
+                $c = Move-Real $sp.x $sp.y
+                "real move -> 实际光标 $($c.x),$($c.y)（目标 $($sp.x),$($sp.y)）"
             } else {
                 [Input]::Post([IntPtr]$Hwnd, $WM_MOUSEMOVE, [IntPtr]::Zero, (Pack-Client $X $Y)) | Out-Null
                 "posted WM_MOUSEMOVE $X,$Y"
@@ -187,10 +210,12 @@ try {
         'click' {
             if ($Real) {
                 $sp = Get-ScreenPoint $Hwnd $X $Y
-                [Input]::RealMove($sp.x, $sp.y); Start-Sleep -Milliseconds 120
+                $c = Move-Real $sp.x $sp.y; Start-Sleep -Milliseconds 120
+                # 命中要用**实际**光标位置去问，用期望位置问等于自己给自己编一个成功
+                $top = [int][Input]::TopAt($c.x, $c.y)
                 [Input]::RealDown(); Start-Sleep -Milliseconds 60; [Input]::RealUp()
-                $top = [int][Input]::TopAt($sp.x, $sp.y)
-                "real click -> screen $($sp.x),$($sp.y) 命中 hwnd=$top（若不是 $Hwnd，说明有东西盖在上面）"
+                "real click -> 实际 $($c.x),$($c.y) 命中 hwnd=$top 目标 hwnd=$Hwnd 前台=$([int][Input]::Fg())" +
+                    $(if ($top -ne $Hwnd) { '  <-- 不是目标窗口，这一步的结论无效' } else { '' })
             } else {
                 $lp = Pack-Client $X $Y
                 $h = [IntPtr]$Hwnd
@@ -204,7 +229,7 @@ try {
             if ($Real) {
                 $a = Get-ScreenPoint $Hwnd $X $Y
                 $b = Get-ScreenPoint $Hwnd $ToX $ToY
-                [Input]::RealMove($a.x, $a.y); Start-Sleep -Milliseconds 120
+                $start = Move-Real $a.x $a.y; Start-Sleep -Milliseconds 120
                 [Input]::RealDown(); Start-Sleep -Milliseconds 60
                 $aborted = $false
                 # 分步移动：一步到位会被系统当成点击而不是拖动
@@ -217,8 +242,10 @@ try {
                     if ([Input]::GetAsyncKeyState(0x1B) -lt 0) { $aborted = $true; break }
                 }
                 [Input]::RealUp()
+                $end = [Input]::Cur()
                 if ($aborted) { "ABORT: Esc，已松开左键后停止"; exit 3 }
-                "real drag $($a.x),$($a.y) -> $($b.x),$($b.y)"
+                # 报实际起止点：拖动的位移要按真实落点算，按期望算会把结论推歪
+                "real drag 实际 $($start.x),$($start.y) -> $($end.x),$($end.y)（期望终点 $($b.x),$($b.y)）"
             } else {
                 # 非真实输入下"拖"只能验 hit-test 说这是不是标题区，移动本身是 DWM 做的
                 $sp = Get-ScreenPoint $Hwnd $X $Y
@@ -230,9 +257,9 @@ try {
             if ($Clicks -eq 0) { 'wheel 要 -Clicks（负数向下）'; exit 2 }
             if ($Real) {
                 $sp = Get-ScreenPoint $Hwnd $X $Y
-                [Input]::RealMove($sp.x, $sp.y); Start-Sleep -Milliseconds 120
+                $c = Move-Real $sp.x $sp.y; Start-Sleep -Milliseconds 120
                 [Input]::RealWheel($Clicks)
-                "real wheel $Clicks 格 @ $($sp.x),$($sp.y)"
+                "real wheel $Clicks 格 @ 实际 $($c.x),$($c.y) 下方 hwnd=$([int][Input]::TopAt($c.x, $c.y))（目标 $Hwnd）"
             } else {
                 $sp = Get-ScreenPoint $Hwnd $X $Y
                 $wp = [IntPtr]((($Clicks * 120) -shl 16) -band 0xFFFF0000)
@@ -262,5 +289,4 @@ try {
         # 把光标还回去。不还原的话，用户回来会发现鼠标停在应用窗口上
         [Input]::RealMove($before.x, $before.y) | Out-Null
         "cursor restored -> $($before.x),$($before.y)"
-    }
-}
+    }}
