@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 ctxpack = { path = "../ctxpack" }
+settings = { path = "../settings" }
 
 # 只在 Windows 上取真正用到的 API；mac/Linux 上这个 crate 编成一个空 main，
 # 这样 `cargo test` 在 Mac 上照样全绿，不会多一个编不过的目标

@@ -1,7 +1,7 @@
 //! 会话上下文：发现 → 选会话 → 读 transcript → clean/v1 渲染 → assemblePrompt。
 //! 对照 packages/panel/src/main/capture.ts（userCandidates / attachContext / currentPayload）。
 
-use crate::settings::{active_template, AppSettings};
+use settings::{active_template, AppSettings};
 use ctxpack::adapters::claude_code;
 use ctxpack::adapters::codex::Codex;
 use ctxpack::adapters::qoder;
@@ -545,7 +545,7 @@ fn home_dir() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{PromptTemplate, SessionPath};
+    use settings::{PromptTemplate, SessionPath};
     use test_support::fixture_home;
 
     fn settings_for(home: &str) -> AppSettings {

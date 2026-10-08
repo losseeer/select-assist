@@ -1,4 +1,6 @@
-//! 与 Electron 版共用同一个 `~/Library/Application Support/select-assist/settings.json`。
+//! 与 Electron 版共用同一份 settings.json：mac 在 `~/Library/Application Support/select-assist`，
+//! Windows 在 `%APPDATA%\select-assist`，Linux 在 `~/.config/select-assist` —— 即 `dirs::config_dir()`，
+//! 它和 Electron `app.getPath('userData')` 取的是同一个目录。
 //! 原生版目前只拥有窗口位置，所以读-改-写时其余键必须原样保留（两版都会 patch 这个文件）。
 
 use std::fs;
@@ -147,15 +149,15 @@ fn take<T: serde::de::DeserializeOwned>(map: &Map<String, Value>, key: &str, int
 impl Settings {
     /// Electron 版用 `app.setName('select-assist')` 把 dev 与打包版统一到这个 userData 目录
     pub fn shared() -> Self {
-        let home = dirs::home_dir().expect("no home directory");
+        // config_dir 就是 Electron 的 userData 父目录：mac ~/Library/Application Support、
+        // Windows %APPDATA%、Linux ~/.config，所以三个平台都跟 Electron 版读写同一份文件
+        let base = dirs::config_dir().expect("no config directory");
         Self {
-            file: home
-                .join("Library/Application Support/select-assist")
-                .join("settings.json"),
+            file: base.join("select-assist").join("settings.json"),
         }
     }
 
-    #[cfg(test)]
+    /// 指定文件位置：测试和冒烟脚本用它把读写指向临时副本，别碰用户真实的 settings.json
     pub fn at(file: PathBuf) -> Self {
         Self { file }
     }

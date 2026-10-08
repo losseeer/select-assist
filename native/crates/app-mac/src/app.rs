@@ -19,7 +19,7 @@ use crate::context::{self, Pack, Payload};
 use crate::geo::{Geometry, Rect};
 use crate::panel::{Panel, Row};
 use crate::pasteboard;
-use crate::settings::{AppSettings, PromptTemplate, SessionPath, Settings, SiteTarget};
+use settings::{AppSettings, PromptTemplate, SessionPath, Settings, SiteTarget};
 use crate::views;
 use ctxpack::adapters::SessionRef;
 

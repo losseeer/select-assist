@@ -34,14 +34,20 @@ const MARGIN_RIGHT: i32 = 16;
 const MARGIN_TOP: i32 = 60;
 const SMOKE_TIMER: usize = 0xA0;
 const HEARTBEAT: usize = 0xA1;
+const SAVETICK: usize = 0xA2;
 
 static MSGS: AtomicU32 = AtomicU32::new(0);
+thread_local! {
+    static MOVED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 /// UI 线程状态。COM/GDI 句柄都不是 Send，只能待在 thread_local 里
 struct Ui {
     chip: crate::paint::Chip,
     layout: crate::paint::Layout,
     painted: bool,
+    /// 上次落盘的位置（DIP）；只在真的变了时才写文件
+    saved: Option<(f64, f64)>,
 }
 
 thread_local! {
@@ -49,6 +55,7 @@ thread_local! {
         chip: crate::paint::Chip::default(),
         layout: crate::paint::Layout::default(),
         painted: false,
+        saved: None,
     });
 }
 
@@ -134,6 +141,19 @@ pub fn run() -> windows::core::Result<()> {
         }
     }
 
+    unsafe { apply_saved_position(hwnd) };
+    // 把当前落点当作基准存下来：只有跟它不同才是用户真的拖动过，避免每次开机白写一遍文件
+    UI.with(|u| {
+        let mut r = RECT::default();
+        unsafe {
+            let _ = GetWindowRect(hwnd, &mut r);
+            let scale = GetDpiForWindow(hwnd) as f64 / 96.0;
+            u.borrow_mut().saved = Some((r.left as f64 / scale, r.top as f64 / scale));
+        }
+    });
+    // 位置落盘：WS_EX_NOACTIVATE 的窗口收不到 WM_EXITSIZEMOVE（实测），
+    // 所以用 1 秒一次的比较式轮询，只在真的移动过才写
+    let _ = unsafe { SetTimer(Some(hwnd), SAVETICK, 1000, None) };
     if let Some(ms) = env::var("SA_SMOKE_MS").ok().and_then(|v| v.parse().ok()) {
         let _ = unsafe { SetTimer(Some(hwnd), SMOKE_TIMER, ms, None) };
     }
@@ -168,6 +188,69 @@ unsafe fn apply_material(hwnd: HWND) {
         &backdrop as *const _ as *const _,
         std::mem::size_of::<DWM_SYSTEMBACKDROP_TYPE>() as u32,
     );
+}
+
+/// 上次的位置（DIP 存在 settings.json 里，和 Electron 版同一份文件）。
+/// 显示器拔掉之后靠 MonitorFromPoint 的"最近显示器"把窗口拉回屏内，别让它跑到无限远处
+unsafe fn apply_saved_position(hwnd: HWND) {
+    let Some((x, y)) = store().position() else {
+        return;
+    };
+    let scale = GetDpiForWindow(hwnd) as f32 / 96.0;
+    let mut pt = POINT {
+        x: (x as f32 * scale) as i32,
+        y: (y as f32 * scale) as i32,
+    };
+    let mut info = MONITORINFO::default();
+    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    if !GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mut info).as_bool() {
+        return;
+    }
+    let wa = info.rcWork;
+    pt.x = pt.x.min(wa.right - (WIDTH as f32 * scale) as i32).max(wa.left);
+    pt.y = pt.y.min(wa.bottom - (HEIGHT as f32 * scale) as i32).max(wa.top);
+    let _ = SetWindowPos(
+        hwnd,
+        None,
+        pt.x,
+        pt.y,
+        0,
+        0,
+        SWP_NOSIZE | SWP_NOACTIVATE,
+    );
+}
+
+/// SA_SETTINGS 指到别处时用它，避免冒烟测试写进用户真实的 settings.json
+/// （dirs::config_dir() 走 SHGetKnownFolderPath，改 APPDATA 环境变量是没用的，实测过）
+fn store() -> settings::Settings {
+    match env::var("SA_SETTINGS") {
+        Ok(p) => settings::Settings::at(std::path::PathBuf::from(p)),
+        Err(_) => settings::Settings::shared(),
+    }
+}
+
+fn save_position_if_moved(hwnd: HWND) {
+    unsafe {
+        let mut r = RECT::default();
+        let _ = GetWindowRect(hwnd, &mut r);
+        let scale = GetDpiForWindow(hwnd) as f64 / 96.0;
+        let pos = (r.left as f64 / scale, r.top as f64 / scale);
+        let changed = UI.with(|u| {
+            let mut ui = u.borrow_mut();
+            if ui.saved == Some(pos) {
+                false
+            } else {
+                ui.saved = Some(pos);
+                true
+            }
+        });
+        if !changed {
+            return;
+        }
+        if let Err(e) = store().patch_position(pos.0, pos.1) {
+            println!("存位置失败: {e}");
+        }
+    }
 }
 
 /// 工作区（扣掉任务栏）。取光标所在的那块屏，和 mac 侧 workArea 语义一致
@@ -243,6 +326,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             let _ = InvalidateRect(Some(hwnd), None, false);
             LRESULT(0)
         }
+
         WM_MOUSEMOVE => {
             let over = matches!(hit(hwnd, lparam_point(l)), Some("button"));
             let changed = UI.with(|u| {
@@ -292,6 +376,23 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
                     let _ = DestroyWindow(hwnd);
                 }
                 HEARTBEAT => crate::webview::tick(hwnd),
+                SAVETICK => {
+                    save_position_if_moved(hwnd);
+                    // SA_MOVE=1：自己挪一下，用来验证「移动 -> 落盘 -> 重启恢复」这条链，
+                    // 不依赖合成鼠标事件（那玩意儿在这台机器上不可靠）
+                    if env::var("SA_MOVE").is_ok() && !MOVED.with(|m| m.get()) {
+                        MOVED.with(|m| m.set(true));
+                        let _ = SetWindowPos(
+                            hwnd,
+                            None,
+                            120,
+                            120,
+                            0,
+                            0,
+                            SWP_NOSIZE | SWP_NOACTIVATE,
+                        );
+                    }
+                }
                 _ => {}
             }
             LRESULT(0)

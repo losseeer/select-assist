@@ -1,0 +1,14 @@
+[package]
+name = "settings"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# 两个原生外壳共用，也和 Electron 版共用同一个 settings.json，
+# 所以它必须独立于任何平台相关的窗口代码存在
+[dependencies]
+ctxpack = { path = "../ctxpack" }
+serde = { version = "1", features = ["derive"] }
+# 写回共用文件时保持用户的键序
+serde_json = { version = "1", features = ["preserve_order"] }
+dirs = "6"

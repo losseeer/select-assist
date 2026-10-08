@@ -6,7 +6,6 @@ mod flipped;
 mod geo;
 mod panel;
 mod pasteboard;
-mod settings;
 mod views;
 
 use objc2::MainThreadMarker;

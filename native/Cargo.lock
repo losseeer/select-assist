@@ -16,6 +16,7 @@ name = "app-win"
 version = "0.1.0"
 dependencies = [
  "ctxpack",
+ "settings",
  "webview2-com",
  "windows",
 ]
@@ -455,6 +456,7 @@ dependencies = [
  "objc2-quartz-core",
  "serde",
  "serde_json",
+ "settings",
  "test-support",
 ]
 
@@ -500,6 +502,16 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "settings"
+version = "0.1.0"
+dependencies = [
+ "ctxpack",
+ "dirs",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
