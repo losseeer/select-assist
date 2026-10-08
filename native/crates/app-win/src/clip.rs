@@ -73,7 +73,11 @@ pub fn write_text(text: &str) -> bool {
             let _ = GlobalUnlock(mem);
             // 到这一步才清空：EmptyClipboard 放前面的话，一旦分配失败，
             // 用户原来复制的东西已经被毁掉，而我们的东西又没写进去
-            EmptyClipboard().ok()?;
+            if EmptyClipboard().is_err() {
+                // 清空失败也得先把手上这块还掉，`.ok()?` 会把它漏在进程里
+                let _ = GlobalFree(Some(mem));
+                return None;
+            }
             // 成功后所有权交给系统，此时再 GlobalFree 会破坏剪贴板内容
             if SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(mem.0))).is_err() {
                 let _ = GlobalFree(Some(mem));
