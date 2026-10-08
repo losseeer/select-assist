@@ -16,6 +16,7 @@ name = "app-win"
 version = "0.1.0"
 dependencies = [
  "capture",
+ "ctxpack",
  "pack",
  "settings",
  "webview2-com",

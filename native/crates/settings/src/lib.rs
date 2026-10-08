@@ -122,12 +122,17 @@ impl Default for AppSettings {
     }
 }
 
-/// 当前生效的提问指令：越界的 activePrompt 退回第一条（与 settings.ts 的兜底一致）
-pub fn active_template(settings: &AppSettings) -> String {
+/// 当前生效的提问指令：越界的 activePrompt 退回第一条（与 settings.ts 的兜底一致）。
+/// 面板要显示的是名字、组装用的是模板，同一个游标别写两遍
+pub fn active_prompt(settings: &AppSettings) -> Option<&PromptTemplate> {
     settings
         .prompts
         .get(settings.active_prompt)
         .or_else(|| settings.prompts.first())
+}
+
+pub fn active_template(settings: &AppSettings) -> String {
+    active_prompt(settings)
         .map(|p| p.template.clone())
         .unwrap_or_else(|| DEFAULT_PROMPT_TEMPLATE.to_string())
 }

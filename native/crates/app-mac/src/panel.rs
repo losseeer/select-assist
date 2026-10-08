@@ -297,26 +297,6 @@ fn section(mtm: MainThreadMarker) -> Retained<NSView> {
 }
 
 /// 「m 分钟前」这种相对时间：400pt 宽的一行放不下 toLocaleString 的完整串，
-/// Electron 那版是 `.mt` 直接摆整串（走查 5.4：极端数据态破坏布局），这里压成短格式，
-/// 完整时间进 tooltip。
-fn short_time(mtime_ms: f64) -> String {
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64() * 1000.0);
-    let mins = ((now_ms - mtime_ms) / 60_000.0).floor();
-    if mins < 1.0 {
-        "刚刚".to_string()
-    } else if mins < 60.0 {
-        format!("{mins:.0} 分")
-    } else if mins < 60.0 * 24.0 {
-        format!("{:.0} 时", mins / 60.0)
-    } else if mins < 60.0 * 24.0 * 7.0 {
-        format!("{:.0} 天", mins / (60.0 * 24.0))
-    } else {
-        format!("{:.0} 周", mins / (60.0 * 24.0 * 7.0))
-    }
-}
-
 /// 会话行的 tooltip：文件路径 + 完整时间，鼠标停上去才看得到
 fn row_tip(reference: &SessionRef) -> String {
     match reference.preview.as_deref() {
@@ -999,22 +979,11 @@ impl Panel {
                 );
                 line.addSubview(&tint);
             }
-            let short_id = reference
-                .session_id
-                .as_deref()
-                .map(|id| format!("#{}", id.chars().take(8).collect::<String>()))
-                .unwrap_or_default();
-            let name = reference.name.clone().unwrap_or_else(|| {
-                reference
-                    .project_path
-                    .as_deref()
-                    .map(|p| p.rsplit(['/', '\\']).next().unwrap_or(p).to_string())
-                    .unwrap_or_default()
-            });
+            let (head_text, name, time_text) = pack::row_text(reference);
             let mark = if picked { "\u{2713}  " } else { "" };
             let head = views::label(
                 mtm,
-                &format!("{mark}{} {short_id}", reference.agent),
+                &format!("{mark}{head_text}"),
                 T_META,
                 &views::dim(),
                 views::rect(S2, 3.0, BROWSER_LEFT, LINE_H),
@@ -1033,7 +1002,7 @@ impl Panel {
             );
             let time = views::label(
                 mtm,
-                &short_time(reference.mtime_ms),
+                &time_text,
                 T_META,
                 &views::faint(),
                 views::rect(width - S2 - BROWSER_TIME, 3.0, BROWSER_TIME, LINE_H),

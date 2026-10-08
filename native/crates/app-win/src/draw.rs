@@ -34,6 +34,14 @@ impl RectF {
         }
     }
 
+    pub fn width(self) -> f32 {
+        self.right - self.left
+    }
+
+    pub fn height(self) -> f32 {
+        self.bottom - self.top
+    }
+
     pub fn contains(self, x: f32, y: f32) -> bool {
         x >= self.left && x <= self.right && y >= self.top && y <= self.bottom
     }
@@ -98,6 +106,9 @@ pub fn select_font(hdc: HDC, hwnd: HWND, pt: f32) {
 /// 文本宽度（DIP）。选中的字体已经按 DPI 放大，所以量出来的是物理像素，再除回去。
 /// 字体没选对时结果也错 —— 调用前必须 select_font 同一个 pt。
 pub fn measure(hdc: HDC, s: &str, pt: f32, scale: f32) -> f32 {
+    if s.is_empty() {
+        return 0.0;
+    }
     let u: Vec<u16> = s.encode_utf16().collect();
     let mut sz = SIZE::default();
     unsafe {
@@ -138,7 +149,13 @@ pub fn fill_ellipse(hdc: HDC, r: RECT, color: COLORREF) {
     }
 }
 
+/// 空串必须挡掉：Vec 为空时 as_ptr 是悬垂的，而 windows-rs 把 len() 当作字符数交给
+/// GDI，DrawTextW 在带 DT_RIGHT / DT_END_ELLIPSIS 时会去量这段文字，直接踩到非法地址
+/// （面板的 ctx 状态行平时就是空的，第一次画就崩在这里）。
 pub fn text(hdc: HDC, s: &str, mut rc: RECT, color: COLORREF, flags: DRAW_TEXT_FORMAT) {
+    if s.is_empty() {
+        return;
+    }
     let mut u: Vec<u16> = s.encode_utf16().collect();
     unsafe {
         let _ = SetTextColor(hdc, color);

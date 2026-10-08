@@ -20,15 +20,17 @@ use windows::Win32::UI::HiDpi::{
     GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
-    GetWindowRect, KillTimer, LoadCursorW, PostQuitMessage, RegisterClassExW, SetTimer,
-    SetWindowPos, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, HTCAPTION, HTCLIENT,
-    HWND_TOPMOST, IDC_ARROW, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOW, WM_DESTROY,
-    WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetCursorPos,
+    GetMessageW, GetWindowRect, KillTimer, LoadCursorW, PostQuitMessage, RegisterClassExW,
+    SetTimer, SetWindowPos, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, HTCAPTION,
+    HTCLIENT, HWND_TOPMOST, IDC_ARROW, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SW_HIDE, SW_SHOW, WM_DESTROY, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT, WM_SIZE,
+    WM_TIMER, WNDCLASSEXW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 use crate::clip;
+use crate::draw;
+use crate::panel;
 use crate::theme;
 use settings::AppSettings;
 
@@ -42,6 +44,9 @@ const SMOKE_TIMER: usize = 0xA0;
 const HEARTBEAT: usize = 0xA1;
 const SAVETICK: usize = 0xA2;
 const FLASH: usize = 0xA3;
+const COPYHOLD: usize = 0xA4;
+/// 「已复制 ✓」的停留时间，与 mac 的 COPIED_HOLD 一致
+const COPIED_HOLD_MS: u32 = 1200;
 /// 与 mac 侧 app.rs 的 ERROR_HOLD / FLASH_HOLD 同一口径
 const ERROR_HOLD_MS: u32 = 3000;
 const FLASH_HOLD_MS: u32 = 4000;
@@ -53,10 +58,14 @@ thread_local! {
     static MOVED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static CLICKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static COPIED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static PANELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// UI 线程状态。COM/GDI 句柄都不是 Send，只能待在 thread_local 里
 struct Ui {
+    /// chip 自己的 HWND。面板的动作要回调 chip（取入 / 折叠 / 退出），
+    /// 而 wndproc 的 hwnd 参数在定时器里没有，所以存一份
+    hwnd: HWND,
     chip: crate::paint::Chip,
     layout: crate::paint::Layout,
     painted: bool,
@@ -74,10 +83,25 @@ struct Ui {
     last_clip: String,
     /// 一两秒后自动消失的错误提示；None 表示状态行回到正常的选区文案
     error: Option<String>,
+    // ---- 面板（M4）。HWND 为 0 表示没开 ----
+    panel: HWND,
+    panel_layout: panel::Layout,
+    /// 面板上那几个下拉当前选中的值：agent 是外壳的视图状态，不在 settings 里
+    agent: String,
+    browsing: bool,
+    browser_rows: Vec<panel::BrowserRow>,
+    /// 与 browser_rows 同序的会话引用，点第 i 行要知道挂的是哪个文件
+    browser_refs: Vec<ctxpack::adapters::SessionRef>,
+    browser_sel: Option<usize>,
+    /// 复制成功后「已复制 ✓」停留期间为 true
+    copied: bool,
+    panel_hover: Option<&'static str>,
+    panel_row: Option<usize>,
 }
 
 thread_local! {
     static UI: RefCell<Ui> = RefCell::new(Ui {
+        hwnd: HWND::default(),
         chip: crate::paint::Chip::default(),
         layout: crate::paint::Layout::default(),
         painted: false,
@@ -88,6 +112,16 @@ thread_local! {
         unread: None,
         last_clip: String::new(),
         error: None,
+        panel: HWND::default(),
+        panel_layout: panel::Layout::default(),
+        agent: "auto".into(),
+        browsing: false,
+        browser_rows: Vec::new(),
+        browser_refs: Vec::new(),
+        browser_sel: None,
+        copied: false,
+        panel_hover: None,
+        panel_row: None,
     });
 }
 
@@ -109,6 +143,18 @@ pub fn run() -> windows::core::Result<()> {
         ..Default::default()
     };
     unsafe { RegisterClassExW(&wndclass) };
+    // 面板要能吃键盘（M4d 的编辑框），所以是另一个类：不带 NOACTIVATE，走自己的 wndproc
+    unsafe {
+        RegisterClassExW(&WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            style: CS_HREDRAW | CS_VREDRAW,
+            lpfnWndProc: Some(panel_wndproc),
+            hInstance: HINSTANCE(instance.0),
+            hCursor: LoadCursorW(None, IDC_ARROW)?,
+            lpszClassName: w!("SelectAssistNativePanel"),
+            ..Default::default()
+        })
+    };
 
     let work = unsafe { work_area() };
     // 不加 WS_EX_NOREDIRECTIONBITMAP：那是给 D3D/合成器直呈准备的，GDI 画上去会因为没有
@@ -168,6 +214,7 @@ pub fn run() -> windows::core::Result<()> {
         }
     }
 
+    UI.with(|u| u.borrow_mut().hwnd = hwnd);
     // 设置只在启动时读一次：M4 加设置界面后改成每次用时现读
     let settings = store().load();
     UI.with(|u| u.borrow_mut().settings = settings);
@@ -298,7 +345,17 @@ fn copy_payload(hwnd: HWND) {
         return;
     }
     // 自己写回的东西不能反过来点亮未读点（Electron 在 pack:copy 里同步 lastClip）
-    UI.with(|u| u.borrow_mut().last_clip = prompt);
+    UI.with(|u| {
+        let mut ui = u.borrow_mut();
+        ui.last_clip = prompt;
+        ui.copied = true;
+    });
+    // 「已复制 ✓」停一下再收回（mac 的 COPIED_HOLD）。定时器挂在面板上：
+    // 只有面板显示这个文案，chip 上没有复制按钮
+    let panel = UI.with(|u| u.borrow().panel);
+    if !panel.0.is_null() {
+        let _ = unsafe { SetTimer(Some(panel), COPYHOLD, COPIED_HOLD_MS, None) };
+    }
     let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
 }
 
@@ -426,6 +483,297 @@ fn hit(hwnd: HWND, pt: (i32, i32)) -> Option<&'static str> {
     })
 }
 
+/* ---------- 面板（M4） ---------- */
+
+/// 从 Ui 状态投影出面板要画的东西。panel.rs 不认识 pack / settings，翻译只做这一次。
+fn panel_view(ui: &Ui) -> panel::PanelView {
+    let (status, status_err) = match ui.error.clone() {
+        Some(message) => (message, true),
+        None => (ui.pack.status_line().0, false),
+    };
+    let (session_line, _, session_err) = ui.pack.session_line(ui.settings.with_context);
+    let sites = if ui.settings.with_context {
+        &ui.settings.chat_sites
+    } else {
+        &ui.settings.direct_sites
+    };
+    let pack_meta = ui.payload.as_ref().map_or_else(String::new, |p| {
+        if p.dropped.is_empty() {
+            format!("组装后 {} 字", p.used_chars)
+        } else {
+            format!("组装后 {} 字 · 丢了 {}", p.used_chars, p.dropped.join("、"))
+        }
+    });
+    let view = panel::PanelView {
+        status,
+        status_err,
+        read_mode: ui.settings.with_context,
+        agent: ui.agent.clone(),
+        turns: ui.settings.context_turns,
+        session_line,
+        session_err,
+        ctx_status: String::new(),
+        ctx_err: false,
+        browsing: ui.browsing,
+        browser_rows: ui.browser_rows.clone(),
+        browser_sel: ui.browser_sel,
+        prompt_name: settings::active_prompt(&ui.settings)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "没有指令".into()),
+        sites: sites.iter().map(|s| s.name.clone()).collect(),
+        pack_meta,
+        copied: ui.copied,
+        hover: ui.panel_hover,
+        hover_row: ui.panel_row,
+    };
+    view
+}
+
+/// 展开：面板顶到 chip 同一个左上角，chip 让位（mac 是 orderOut + orderFront）
+unsafe fn open_panel(chip: HWND) {
+    if UI.with(|u| !u.borrow().panel.0.is_null()) {
+        return;
+    }
+    let mut r = RECT::default();
+    let _ = GetWindowRect(chip, &mut r);
+    let s = draw::scale(chip);
+    let panel = CreateWindowExW(
+        // 只有 TOOLWINDOW：面板要能吃键盘，所以不带 NOACTIVATE（M4d 的编辑框靠它）
+        WS_EX_TOOLWINDOW,
+        w!("SelectAssistNativePanel"),
+        w!("select-assist"),
+        WS_POPUP,
+        r.left,
+        r.top,
+        (theme::WIDTH * s) as i32,
+        (240.0 * s) as i32, // 占位高度，第一帧 paint 之后按内容收敛
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap_or_default();
+    if panel.0.is_null() {
+        return;
+    }
+    apply_material(panel);
+    let _ = ShowWindow(panel, SW_SHOW);
+    let _ = InvalidateRect(Some(panel), None, true);
+    UI.with(|u| u.borrow_mut().panel = panel);
+    let _ = ShowWindow(chip, SW_HIDE);
+}
+
+unsafe fn close_panel() {
+    let panel = UI.with(|u| u.borrow().panel);
+    if panel.0.is_null() {
+        return;
+    }
+    let _ = DestroyWindow(panel);
+    UI.with(|u| {
+        let mut ui = u.borrow_mut();
+        ui.panel = HWND::default();
+        ui.panel_layout = panel::Layout::default();
+    });
+}
+
+unsafe fn quit_app(chip: HWND) {
+    close_panel();
+    let _ = DestroyWindow(chip);
+}
+
+/// 面板上的一次点击。id 来自 panel.rs 的命中表，那边每加一个这里就得加一条。
+unsafe fn panel_action(chip: HWND, id: &'static str, row: Option<usize>) {
+    match id {
+        "collapse" => {
+            close_panel();
+            let _ = ShowWindow(chip, SW_SHOW);
+            let _ = InvalidateRect(Some(chip), None, false);
+        }
+        "quit" => quit_app(chip),
+        "capture" => capture_selection(chip),
+        "mode-off" => set_mode(chip, !UI.with(|u| u.borrow().settings.with_context)),
+        "browse" => browse_sessions(),
+        "refresh" => browse_sessions(),
+        "browser" => pick_session(row),
+        "copy" => copy_payload(chip),
+        "agent" | "turns" | "prompt" | "site" => {} // M4b / M4c
+        _ => {}
+    }
+    let _ = row;
+}
+
+/// 换模式：写回设置、重算 payload，直通模式要把上下文剥掉
+fn set_mode(chip: HWND, read: bool) {
+    UI.with(|u| u.borrow_mut().settings.with_context = read);
+    if read {
+        UI.with(|u| {
+            let mut ui = u.borrow_mut();
+            let settings = ui.settings.clone();
+            let turns = settings.context_turns;
+            let agent = ui.agent.clone();
+            ui.pack.attach(&settings, &agent, turns, None, None);
+            ui.payload = ui.pack.payload(&settings);
+        });
+    }
+    repaint(chip);
+}
+
+fn repaint(chip: HWND) {
+    unsafe {
+        let panel = UI.with(|u| u.borrow().panel);
+        if !panel.0.is_null() {
+            let _ = InvalidateRect(Some(panel), None, false);
+        }
+        let _ = InvalidateRect(Some(chip), None, false);
+    }
+}
+
+/// 浏览会话：pack::browse 拿一批，列表按 mac 的口径显示「标题 · agent · 时间」
+fn browse_sessions() {
+    let refs = UI.with(|u| {
+        let settings = u.borrow().settings.clone();
+        pack::browse(&settings, pack::BROWSE_LIMIT)
+    });
+    let rows = refs
+        .iter()
+        .map(|r| {
+            let (head, title, time) = pack::row_text(r);
+            panel::BrowserRow {
+                head,
+                title,
+                time,
+                preview: r.preview.clone().unwrap_or_default(),
+            }
+        })
+        .collect::<Vec<_>>();
+    UI.with(|u| {
+        let mut ui = u.borrow_mut();
+        ui.browsing = true;
+        ui.browser_sel = if rows.is_empty() { None } else { Some(0) };
+        ui.browser_rows = rows;
+        ui.browser_refs = refs;
+    });
+}
+
+fn pick_session(row: Option<usize>) {
+    let picked = UI.with(|u| {
+        let ui = u.borrow();
+        row.and_then(|i| ui.browser_refs.get(i)).cloned()
+    });
+    let Some(reference) = picked else {
+        return;
+    };
+    UI.with(|u| {
+        let mut ui = u.borrow_mut();
+        ui.browser_sel = row;
+        let settings = ui.settings.clone();
+        let turns = settings.context_turns;
+        ui.pack.attach(
+            &settings,
+            &reference.agent,
+            turns,
+            Some(&reference.file_path),
+            reference.session_id.as_deref(),
+        );
+        ui.payload = ui.pack.payload(&settings);
+    });
+}
+
+unsafe extern "system" fn panel_wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    match msg {
+        WM_PAINT => {
+            let height = unsafe {
+                let view = UI.with(|u| panel_view(&u.borrow()));
+                let layout = panel::paint(hwnd, &view);
+                let want = (layout.height * draw::scale(hwnd)) as i32;
+                let mut rc = RECT::default();
+                let _ = GetClientRect(hwnd, &mut rc);
+                UI.with(|u| u.borrow_mut().panel_layout = layout);
+                (want, rc.bottom)
+            };
+            let _ = ValidateRect(Some(hwnd), None);
+            // 内容高度要等画完才知道，所以第一帧之后自己改一次尺寸；差 1px 以内不动，避免抖
+            if (height.0 - height.1).abs() > 1 {
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    0,
+                    0,
+                    (theme::WIDTH * draw::scale(hwnd)) as i32,
+                    height.0,
+                    SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER,
+                );
+            }
+            LRESULT(0)
+        }
+        WM_MOUSEMOVE => {
+            let pt = lparam_point(l);
+            let (hover, row) = UI.with(|u| {
+                let ui = u.borrow();
+                let s = draw::scale(hwnd);
+                (
+                    ui.panel_layout.hit(pt.0 as f32 / s, pt.1 as f32 / s),
+                    ui.panel_layout.hit_row(pt.0 as f32 / s, pt.1 as f32 / s),
+                )
+            });
+            let changed = UI.with(|u| {
+                let mut ui = u.borrow_mut();
+                if (ui.panel_hover, ui.panel_row) == (hover, row) {
+                    false
+                } else {
+                    ui.panel_hover = hover;
+                    ui.panel_row = row;
+                    true
+                }
+            });
+            if changed {
+                let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
+            }
+            LRESULT(0)
+        }
+        WM_LBUTTONUP => {
+            let pt = lparam_point(l);
+            let hit = UI.with(|u| {
+                let ui = u.borrow();
+                let s = draw::scale(hwnd);
+                let (x, y) = (pt.0 as f32 / s, pt.1 as f32 / s);
+                (ui.panel_layout.hit(x, y), ui.panel_layout.hit_row(x, y))
+            });
+            if let Some(id) = hit.0 {
+                let chip = UI.with(|u| u.borrow().hwnd);
+                panel_action(chip, id, hit.1);
+            }
+            let _ = InvalidateRect(Some(hwnd), None, false);
+            LRESULT(0)
+        }
+        WM_TIMER => {
+            if w.0 == COPYHOLD {
+                UI.with(|u| u.borrow_mut().copied = false);
+                let _ = KillTimer(Some(hwnd), COPYHOLD);
+                let _ = InvalidateRect(Some(hwnd), None, false);
+            }
+            LRESULT(0)
+        }
+        WM_DESTROY => {
+            UI.with(|u| u.borrow_mut().panel = HWND::default());
+            LRESULT(0)
+        }
+        // 空白处可以拖（对应 CSS 的 -webkit-app-region: drag），控件区留给点击
+        WM_NCHITTEST => {
+            let pt = client_point(hwnd, l);
+            let on_control = UI.with(|u| {
+                let ui = u.borrow();
+                let s = draw::scale(hwnd);
+                ui.panel_layout
+                    .hit(pt.0 as f32 / s, pt.1 as f32 / s)
+                    .is_some()
+            });
+            LRESULT(if on_control { HTCLIENT } else { HTCAPTION } as isize)
+        }
+        _ => DefWindowProcW(hwnd, msg, w, l),
+    }
+}
+
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     MSGS.fetch_add(1, Ordering::Relaxed);
     match msg {
@@ -486,7 +834,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
         WM_LBUTTONUP => {
             match hit(hwnd, lparam_point(l)) {
                 Some("button") => capture_selection(hwnd),
-                Some("dot") => flash(hwnd, "展开面板（M4 接）"),
+                Some("dot") => open_panel(hwnd),
                 _ => {}
             }
             let _ = InvalidateRect(Some(hwnd), None, false);
@@ -525,6 +873,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
                     if (env::var("SA_CAPTURE").is_ok() || wants_copy) && !had_capture {
                         CLICKED.with(|c| c.set(true));
                         capture_selection(hwnd);
+                    }
+                    if env::var("SA_PANEL").is_ok() && !PANELD.with(|c| c.get()) {
+                        PANELD.with(|c| c.set(true));
+                        open_panel(hwnd);
                     }
                     if wants_copy && had_capture && !COPIED.with(|c| c.get()) {
                         COPIED.with(|c| c.set(true));

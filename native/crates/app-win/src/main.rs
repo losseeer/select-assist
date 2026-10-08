@@ -11,6 +11,8 @@ mod draw;
 #[cfg(windows)]
 mod paint;
 #[cfg(windows)]
+mod panel;
+#[cfg(windows)]
 mod shell;
 #[cfg(windows)]
 mod theme;

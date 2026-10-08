@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 capture = { path = "../capture" }
+ctxpack = { path = "../ctxpack" }
 pack = { path = "../pack" }
 settings = { path = "../settings" }
 

@@ -242,6 +242,48 @@ pub fn browse(settings: &AppSettings, limit: usize) -> Vec<SessionRef> {
     all
 }
 
+/// 距今多久，压成「刚刚 / 12 分 / 3 时 / 5 天 / 2 周」。
+/// Electron 那版直接把 mtime 整串摆出来，极端数据会把布局撑破（走查 5.4），所以只留一档量级。
+pub fn short_time(mtime_ms: f64) -> String {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64() * 1000.0);
+    let mins = ((now_ms - mtime_ms) / 60_000.0).floor();
+    if mins < 1.0 {
+        "刚刚".to_string()
+    } else if mins < 60.0 {
+        format!("{mins:.0} 分")
+    } else if mins < 60.0 * 24.0 {
+        format!("{:.0} 时", mins / 60.0)
+    } else if mins < 60.0 * 24.0 * 7.0 {
+        format!("{:.0} 天", mins / (60.0 * 24.0))
+    } else {
+        format!("{:.0} 周", mins / (60.0 * 24.0 * 7.0))
+    }
+}
+
+/// 会话浏览器一行的三块固定文字：(``agent #短 id``, 标题, 距今)。
+/// 选中记号是视图状态，所以不在这里；两个外壳都拼 `mark + head`。
+pub fn row_text(reference: &SessionRef) -> (String, String, String) {
+    let head = format!(
+        "{} {}",
+        reference.agent,
+        reference
+            .session_id
+            .as_deref()
+            .map(|id| format!("#{}", utf16::head(id, 8)))
+            .unwrap_or_default()
+    );
+    let title = reference.name.clone().unwrap_or_else(|| {
+        reference
+            .project_path
+            .as_deref()
+            .map(|p| p.rsplit(['/', '\\']).next().unwrap_or(p).to_string())
+            .unwrap_or_default()
+    });
+    (head, title, short_time(reference.mtime_ms))
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Payload {
     pub prompt: String,

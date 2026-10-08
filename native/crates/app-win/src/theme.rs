@@ -8,20 +8,38 @@
 use windows::Win32::Foundation::COLORREF;
 
 /* ---------- 间距：4pt 网格（与 views.rs 同一套 S1..S4） ---------- */
+/// 光学微调档（点与文字、圆角与基线之间）
+pub const S1: f32 = 4.0;
+/// 组内：一行里控件之间
 pub const S2: f32 = 8.0;
+/// 行间：正文一叠行之间的固定缝隙（CSS: #panel gap 12）
+pub const S3: f32 = 12.0;
+/// 边距：面板左右与底部
 pub const S4: f32 = 16.0;
 
 pub const PAD_X: f32 = S4;
+pub const PAD_TOP: f32 = S2;
+pub const PAD_BOTTOM: f32 = S4;
 pub const GAP: f32 = S2;
+pub const ROW_GAP: f32 = S3;
 
 pub const WIDTH: f32 = 400.0;
 pub const CHIP_H: f32 = 44.0;
-pub const CTRL_H: f32 = 24.0;
+/// .icon-btn 22×22 → 24：可点面积原本小于视觉预期
 pub const ICON: f32 = 24.0;
+pub const CTRL_H: f32 = 24.0;
+/// 一行文字的高度（CSS: .line-slot 16）
+pub const LINE_H: f32 = 16.0;
 pub const DOT: f32 = 8.0;
+/// 会话浏览器一行
+pub const BROWSE_ROW: f32 = 36.0;
 
 pub const T_BODY: f32 = 12.0;
+pub const T_META: f32 = 11.0;
+pub const T_HEAD: f32 = 13.0;
+
 pub const R_CTRL: f32 = 6.0;
+pub const R_FIELD: f32 = 8.0;
 
 /* ---------- 颜色 ---------- */
 
@@ -47,18 +65,29 @@ pub const CARD: COLORREF = COLORREF(0x000A_0909);
 /// 面板比 chip 多叠一层 veil(20,20,24,.55)，同样压在黑底上 → (11,11,13)
 pub const PANEL: COLORREF = COLORREF(0x000D_0B0B);
 
-/// fill_track：白 .07，▸ 的底座。面板还会用到更多档，用到时再往上添，
-/// 一次抄一整张表的话，没人用的常量会在每次 clippy 里叫。
+/// --line 发丝：只用于容器与分组，控件一律不描边
+pub const HAIRLINE: COLORREF = mix(PANEL, 255, 255, 255, 26);
+/// fill_ctrl：中性控件的填充（CSS 的 .07 在暗底上几乎不可见，mac 提到 .10）
+pub const FILL: COLORREF = mix(PANEL, 255, 255, 255, 26);
+/// fill_track：白 .07，▸ 的底座、模式开关的槽
 pub const TRACK: COLORREF = mix(PANEL, 255, 255, 255, 18);
+/// fill_field：输入区，黑 .26
+pub const FIELD: COLORREF = mix(PANEL, 0, 0, 0, 66);
 /// --accent #0A84FF
 pub const ACCENT: COLORREF = COLORREF(0x00FF_840A);
 pub const ACCENT_HOVER: COLORREF = COLORREF(0x00FF_9419);
+/// accent_tint：列表选中行
+pub const ACCENT_SOFT: COLORREF = mix(PANEL, 10, 132, 255, 56);
 /// --warn #e5a13c
 pub const WARN: COLORREF = COLORREF(0x003C_A1E5);
 /// secondaryLabel rgba(235,235,245,.6)：状态行与次要文字。
 /// chip 叠在 CARD 上是 (144,144,151)、面板叠在 PANEL 上是 (145,145,152)，差 1 不到，
 /// 只留一个值，免得两个窗口为了这一点差别各写一套。
 pub const DIM: COLORREF = mix(PANEL, 235, 235, 245, 153);
+/// labelColor：正文
+pub const INK: COLORREF = mix(PANEL, 255, 255, 255, 217);
+/// tertiaryLabel：列表副行、时间戳
+pub const FAINT: COLORREF = mix(PANEL, 235, 235, 245, 77);
 pub const WHITE: COLORREF = COLORREF(0x00FF_FFFF);
 
 #[cfg(test)]
