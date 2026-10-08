@@ -88,6 +88,8 @@ pub fn tick(hwnd: HWND) {
             bottom: 44,
         })
         .expect("SetBounds");
+        // 控制器默认不可见，runtime 会因此不拉起 browser 进程
+        ctrl.SetIsVisible(true).expect("SetIsVisible");
         let webview = ctrl.CoreWebView2().expect("CoreWebView2");
         webview
             .Navigate(&HSTRING::from(url))
