@@ -148,12 +148,28 @@ pub fn owns(hwnd: HWND) -> bool {
     EDITS.with(|e| e.borrow().contains(&hwnd))
 }
 
+/// 我们内部一律用 `\n`（settings.json、解析器、mac 侧都是），控件那一头一律用 `\r\n`。
+/// 为什么必须在边界上换算：Win32 的 EDIT 只认 `\r` 是换行，光秃秃一个 `\n` 它不折行 ——
+/// 站点列表两行会被挤成 `DeepSeek|https://…/ChatGPT|https://…/` 糊成一行，
+/// 用户既看不清也改不动。真实输入那轮才暴露出来：WM_SETTEXT/WM_GETTEXT 两边都原样
+/// 保留 `\n`，所以只读文本的测试一直是绿的，只有眼睛会看见。
+fn to_control(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\n', "\r\n")
+}
+
+fn from_control(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 pub fn set(index: usize, text: &str) {
     let h = EDITS.with(|e| e.borrow()[index]);
     if h.0.is_null() {
         return;
     }
-    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    let wide: Vec<u16> = to_control(text)
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     unsafe {
         let _ = SetWindowTextW(h, PCWSTR(wide.as_ptr()));
     }
@@ -168,7 +184,7 @@ pub fn get(index: usize) -> String {
         let len = GetWindowTextLengthW(h) as usize;
         let mut buf = vec![0u16; len + 1];
         let n = GetWindowTextW(h, &mut buf).max(0) as usize;
-        String::from_utf16_lossy(&buf[..n.min(len)])
+        from_control(&String::from_utf16_lossy(&buf[..n.min(len)]))
     }
 }
 
@@ -184,5 +200,36 @@ pub unsafe fn release_brush() {
     let b = BRUSH.with(|b| b.replace(HBRUSH::default()));
     if !b.0.is_null() {
         let _ = DeleteObject(b.into());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{from_control, to_control};
+
+    #[test]
+    fn breaks_become_crlf_on_the_way_in_and_back_on_the_way_out() {
+        assert_eq!(to_control("a\nb\nc"), "a\r\nb\r\nc");
+        assert_eq!(from_control("a\r\nb\r\nc"), "a\nb\nc");
+    }
+
+    #[test]
+    fn an_already_crlf_text_is_not_doubled() {
+        // 用户在框里按回车，控件给回来的是 \r\n；存进草稿再种回去不能变成 \r\r\n
+        assert_eq!(to_control("a\r\nb"), "a\r\nb");
+        assert_eq!(from_control(&to_control("a\r\nb")), "a\nb");
+    }
+
+    #[test]
+    fn a_lone_cr_counts_as_a_break_too() {
+        // 粘贴进来的老 Mac 文本
+        assert_eq!(from_control("a\rb"), "a\nb");
+    }
+
+    #[test]
+    fn round_trips_the_settings_shape() {
+        let sites = "DeepSeek|https://chat.deepseek.com/\nChatGPT|https://chatgpt.com/";
+        assert_eq!(from_control(&to_control(sites)), sites);
+        assert_eq!(to_control("").as_str(), "");
     }
 }
