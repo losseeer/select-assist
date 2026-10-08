@@ -1,17 +1,19 @@
-//! M0 窗口骨架：无边框、不抢焦点、常驻顶层、按 DPI 换算物理尺寸。
+//! Windows 外壳：无边框、不抢焦点、常驻顶层的 chip 窗口。
 //! 对应 mac 侧 chip.rs 的 NSWindowStyleMask::Borderless | NonactivatingPanel。
 
+use std::cell::RefCell;
 use std::env;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use windows::core::w;
-use windows::Win32::Foundation::{COLORREF, HWND, HINSTANCE, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Foundation::{HWND, HINSTANCE, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE,
     DWM_SYSTEMBACKDROP_TYPE, DWM_WINDOW_CORNER_PREFERENCE,
 };
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, GetMonitorInfoW, HBRUSH,
-    MONITORINFO, MONITOR_DEFAULTTONEAREST, MonitorFromPoint, PAINTSTRUCT, HGDIOBJ,
+    ClientToScreen, GetMonitorInfoW, InvalidateRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    MonitorFromPoint, ValidateRect,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
@@ -20,12 +22,11 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
     GetWindowRect, LoadCursorW, PostQuitMessage, RegisterClassExW, SetTimer, SetWindowPos,
-    ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, HTCAPTION, HWND_TOPMOST, IDC_ARROW,
-    MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOW,
-    WM_DESTROY, WM_NCHITTEST, WM_PAINT, WM_TIMER, WNDCLASSEXW, WS_EX_NOACTIVATE,
-    WS_EX_LAYERED, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP,
+    ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, HWND_TOPMOST, HTCAPTION, HTCLIENT,
+    IDC_ARROW, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOW, WM_DESTROY, WM_LBUTTONUP,
+    WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP,
 };
-
 
 const WIDTH: i32 = 400;
 const HEIGHT: i32 = 44;
@@ -34,8 +35,25 @@ const MARGIN_TOP: i32 = 60;
 const SMOKE_TIMER: usize = 0xA0;
 const HEARTBEAT: usize = 0xA1;
 
+static MSGS: AtomicU32 = AtomicU32::new(0);
+
+/// UI 线程状态。COM/GDI 句柄都不是 Send，只能待在 thread_local 里
+struct Ui {
+    chip: crate::paint::Chip,
+    layout: crate::paint::Layout,
+    painted: bool,
+}
+
+thread_local! {
+    static UI: RefCell<Ui> = RefCell::new(Ui {
+        chip: crate::paint::Chip::default(),
+        layout: crate::paint::Layout::default(),
+        painted: false,
+    });
+}
+
 pub fn run() -> windows::core::Result<()> {
-    // 必须先于建窗：DWM 那个最小高度按物理像素算，进程不感知 DPI 就量不准
+    // 必须先于建窗：布局按 DPI 换算，进程不感知 DPI 就量不准
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     };
@@ -51,18 +69,16 @@ pub fn run() -> windows::core::Result<()> {
         lpszClassName: class,
         ..Default::default()
     };
-    let _atom = unsafe { RegisterClassExW(&wndclass) };
-    let _ = _atom;
+    unsafe { RegisterClassExW(&wndclass) };
 
-    // SA_LAYERED=1 复现 Electron 的 transparent:true（Chromium 走 layered + 材质的组合）
+    let work = unsafe { work_area() };
     let ex_style = if env::var("SA_LAYERED").is_ok() {
         WS_EX_LAYERED
     } else if env::var("SA_OPAQUE").is_ok() {
-        WS_EX_TOOLWINDOW // 占位：什么都不加
+        WS_EX_TOOLWINDOW // 占位：等价于什么都不额外加
     } else {
         WS_EX_NOREDIRECTIONBITMAP
     };
-    let work = unsafe { work_area() };
     let hwnd = unsafe {
         CreateWindowExW(
             // TOOLWINDOW ≈ 不进任务栏 / ⌘Tab（mac 侧的 Accessory 策略）
@@ -77,7 +93,7 @@ pub fn run() -> windows::core::Result<()> {
             HEIGHT,
             None,
             None,
-            Some(instance.into()),
+            Some(HINSTANCE(instance.0)),
             None,
         )?
     };
@@ -95,7 +111,10 @@ pub fn run() -> windows::core::Result<()> {
             SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
         )?;
         let _ = ShowWindow(hwnd, SW_SHOW);
+        // ShowWindow 不保证产生 WM_PAINT，显式失效一次
+        let _ = InvalidateRect(Some(hwnd), None, true);
     }
+
     if env::var("SA_WEBVIEW").is_ok() {
         let _ = unsafe {
             windows::Win32::System::Com::CoInitializeEx(
@@ -103,7 +122,6 @@ pub fn run() -> windows::core::Result<()> {
                 windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
             )
         };
-        // 页面由外部给（不写死机器路径）：SA_WEBVIEW_URL=file:///.../static/index.html#chip
         match env::var("SA_WEBVIEW_URL").ok() {
             Some(url) => {
                 // 用户数据目录单独放，别在 target/ 里留 WebView2 的垃圾
@@ -115,24 +133,30 @@ pub fn run() -> windows::core::Result<()> {
             None => println!("SA_WEBVIEW=1 但没给 SA_WEBVIEW_URL，跳过"),
         }
     }
+
     if let Some(ms) = env::var("SA_SMOKE_MS").ok().and_then(|v| v.parse().ok()) {
         let _ = unsafe { SetTimer(Some(hwnd), SMOKE_TIMER, ms, None) };
-        // SetTimer 返回 0 才算失败，M0 不关心
     }
     unsafe { report(hwnd) };
 
     let mut msg = MSG::default();
     while unsafe { GetMessageW(&mut msg, None, 0, 0).as_bool() } {
-        unsafe {
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
+        let _ = unsafe { TranslateMessage(&msg) };
+        unsafe { DispatchMessageW(&msg) };
     }
     Ok(())
 }
 
-/// SA_BACKDROP=acrylic|mica 控制，用来在原生窗口上复现「DWM 材质 + 44 高」会发生什么
+/// SA_BACKDROP=acrylic|mica 控制，用来在原生窗口上复现「DWM 材质 + 44 高」会发生什么。
+/// 圆角始终打开：卡片本身就是窗口，交给 DWM 裁比自绘抗锯齿省事。
 unsafe fn apply_material(hwnd: HWND) {
+    let corner = DWM_WINDOW_CORNER_PREFERENCE(2); // DWMWCP_ROUND
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_WINDOW_CORNER_PREFERENCE,
+        &corner as *const _ as *const _,
+        std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
+    );
     let backdrop = match env::var("SA_BACKDROP").unwrap_or_default().as_str() {
         "acrylic" => DWM_SYSTEMBACKDROP_TYPE(3),
         "mica" => DWM_SYSTEMBACKDROP_TYPE(2),
@@ -144,22 +168,16 @@ unsafe fn apply_material(hwnd: HWND) {
         &backdrop as *const _ as *const _,
         std::mem::size_of::<DWM_SYSTEMBACKDROP_TYPE>() as u32,
     );
-    let corner = DWM_WINDOW_CORNER_PREFERENCE(2); // DO_ROUND
-    let _ = DwmSetWindowAttribute(
-        hwnd,
-        DWMWA_WINDOW_CORNER_PREFERENCE,
-        &corner as *const _ as *const _,
-        std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
-    );
 }
 
 /// 工作区（扣掉任务栏）。取光标所在的那块屏，和 mac 侧 workArea 语义一致
 unsafe fn work_area() -> RECT {
     let mut cursor = POINT::default();
     GetCursorPos(&mut cursor).ok();
+    let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
     let mut info = MONITORINFO::default();
     info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-    if GetMonitorInfoW(MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST), &mut info).as_bool() {
+    if GetMonitorInfoW(monitor, &mut info).as_bool() {
         return info.rcWork;
     }
     RECT {
@@ -184,25 +202,97 @@ unsafe fn report(hwnd: HWND) {
     );
 }
 
+/// WM_NCHITTEST 的 lParam 是屏幕坐标，换成客户区坐标
+unsafe fn client_point(hwnd: HWND, l: LPARAM) -> (i32, i32) {
+    let mut origin = POINT { x: 0, y: 0 };
+    let _ = ClientToScreen(hwnd, &mut origin);
+    let sx = (l.0 as i32 & 0xFFFF) as i16 as i32;
+    let sy = ((l.0 >> 16) as i32 & 0xFFFF) as i16 as i32;
+    (sx - origin.x, sy - origin.y)
+}
+
+fn lparam_point(l: LPARAM) -> (i32, i32) {
+    (
+        (l.0 as u32 & 0xFFFF) as i16 as i32,
+        ((l.0 as u32) >> 16 & 0xFFFF) as i16 as i32,
+    )
+}
+
+fn hit(hwnd: HWND, pt: (i32, i32)) -> Option<&'static str> {
+    UI.with(|u| crate::paint::hit(&u.borrow().layout, pt, unsafe {
+        GetDpiForWindow(hwnd)
+    } as f32))
+}
+
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    MSGS.fetch_add(1, Ordering::Relaxed);
     match msg {
         WM_PAINT => {
-            let mut ps = PAINTSTRUCT::default();
-            let hdc = BeginPaint(hwnd, &mut ps);
-            // #161618：--bg 叠在无材质窗口上的实测色，M0 只用来证明画上了
-            let brush = CreateSolidBrush(COLORREF(0x0018_1616));
-            FillRect(hdc, &ps.rcPaint, HBRUSH(brush.0));
-            let _ = DeleteObject(HGDIOBJ(brush.0));
-            let _ = EndPaint(hwnd, &ps);
+            let layout = UI.with(|u| {
+                let mut ui = u.borrow_mut();
+                let l = crate::paint::paint(hwnd, &ui.chip);
+                ui.layout = l;
+                ui.painted = true;
+                l
+            });
+            let _ = ValidateRect(Some(hwnd), None);
+            let _ = layout;
             LRESULT(0)
         }
-        // 整条 chip 都是拖拽区（对应 CSS 的 -webkit-app-region: drag）
-        WM_NCHITTEST => LRESULT(HTCAPTION as isize),
+        WM_SIZE => {
+            let _ = InvalidateRect(Some(hwnd), None, false);
+            LRESULT(0)
+        }
+        WM_MOUSEMOVE => {
+            let over = matches!(hit(hwnd, lparam_point(l)), Some("button"));
+            let changed = UI.with(|u| {
+                let mut ui = u.borrow_mut();
+                if ui.chip.hover != over {
+                    ui.chip.hover = over;
+                    true
+                } else {
+                    false
+                }
+            });
+            if changed {
+                let _ = InvalidateRect(Some(hwnd), None, false);
+            }
+            LRESULT(0)
+        }
+        // 除按钮/把手外都是拖拽区（对应 CSS 的 -webkit-app-region: drag）
+        WM_NCHITTEST => {
+            let on_control = hit(hwnd, client_point(hwnd, l)).is_some();
+            LRESULT(if on_control { HTCLIENT } else { HTCAPTION } as isize)
+        }
+        WM_LBUTTONUP => {
+            match hit(hwnd, lparam_point(l)).map(String::from).as_deref() {
+                // M1 先证明命中模型通了：点按钮切换未读点与状态文字
+                Some("button") => UI.with(|u| {
+                    let mut ui = u.borrow_mut();
+                    ui.chip.badge = !ui.chip.badge;
+                    ui.chip.status = if ui.chip.badge {
+                        "已取入 12 字".into()
+                    } else {
+                        "还没有选区".into()
+                    };
+                }),
+                Some("dot") => UI.with(|u| {
+                    u.borrow_mut().chip.status = "展开面板（M4 接）".into();
+                }),
+                _ => {}
+            }
+            let _ = InvalidateRect(Some(hwnd), None, false);
+            LRESULT(0)
+        }
         WM_TIMER => {
-            if w.0 == SMOKE_TIMER {
-                let _ = DestroyWindow(hwnd);
-            } else if w.0 == HEARTBEAT {
-                crate::webview::tick(hwnd);
+            match w.0 {
+                SMOKE_TIMER => {
+                    let painted = UI.with(|u| u.borrow().painted);
+                    println!("smoke 到期，首帧已画={painted}，收到消息 {} 条", MSGS.load(Ordering::Relaxed));
+                    let _ = DestroyWindow(hwnd);
+                }
+                HEARTBEAT => crate::webview::tick(hwnd),
+                _ => {}
             }
             LRESULT(0)
         }
