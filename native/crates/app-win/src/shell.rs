@@ -11,8 +11,8 @@ use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWM_WINDOW_CORNER_PREFERENCE,
 };
 use windows::Win32::Graphics::Gdi::{
-    ClientToScreen, GetMonitorInfoW, InvalidateRect, MonitorFromPoint, ValidateRect, MONITORINFO,
-    MONITOR_DEFAULTTONEAREST,
+    ClientToScreen, GetMonitorInfoW, InvalidateRect, MonitorFromPoint, MonitorFromRect,
+    ValidateRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
@@ -27,8 +27,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EN_CHANGE, HTCAPTION, HTCLIENT, HWND_TOPMOST, IDC_ARROW, MF_BYCOMMAND, MF_CHECKED, MF_STRING,
     MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNORMAL,
     TPM_BOTTOMALIGN, TPM_LEFTBUTTON, TPM_RETURNCMD, WM_COMMAND, WM_CTLCOLOREDIT, WM_DESTROY,
-    WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST, WM_NULL, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST, WM_NULL, WM_PAINT, WM_SIZE, WM_TIMER,
+    WNDCLASSEXW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 use crate::clip;
@@ -102,6 +102,9 @@ struct Ui {
     copied: bool,
     panel_hover: Option<&'static str>,
     panel_row: Option<usize>,
+    /// 正文滚动量与窗口当前高度（DIP）。窗口被工作区夹住时靠这两个数算滚动边界
+    scroll: f32,
+    panel_window_h: f32,
     /// 设置组是否展开。展开时才建那三个 EDIT —— 收着的时候它们是零个窗口
     settings_open: bool,
     /// 设置组里有没保存的改动
@@ -135,6 +138,8 @@ thread_local! {
         copied: false,
         panel_hover: None,
         panel_row: None,
+        scroll: 0.0,
+        panel_window_h: 240.0,
         settings_open: false,
         dirty: false,
         draft_prompt: 0,
@@ -465,6 +470,18 @@ fn monitor_info() -> MONITORINFO {
     }
 }
 
+/// 窗口自己那块屏的工作区。不能用 work_area()：那个按**光标**所在显示器取，
+/// 双屏下光标在哪块屏，面板就会被夹到一块跟它无关的屏的尺寸上
+unsafe fn work_area_of(hwnd: HWND) -> RECT {
+    let mut r = RECT::default();
+    let _ = GetWindowRect(hwnd, &mut r);
+    let mut info = monitor_info();
+    if GetMonitorInfoW(MonitorFromRect(&r, MONITOR_DEFAULTTONEAREST), &mut info).as_bool() {
+        return info.rcWork;
+    }
+    r
+}
+
 /// 工作区（扣掉任务栏）。取光标所在的那块屏，和 mac 侧 workArea 语义一致
 unsafe fn work_area() -> RECT {
     let mut cursor = POINT::default();
@@ -557,6 +574,9 @@ fn panel_view(ui: &Ui) -> panel::PanelView {
         copied: ui.copied,
         hover: ui.panel_hover,
         hover_row: ui.panel_row,
+        scroll: ui.scroll,
+        content: ui.panel_layout.height,
+        window: ui.panel_window_h,
         settings_open: ui.settings_open,
         dirty: ui.dirty,
         redact: ui.settings.redact_paths,
@@ -998,16 +1018,31 @@ unsafe extern "system" fn panel_wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPAR
             if UI.with(|u| u.borrow().settings_open) {
                 unsafe { edits::place(field_rects(hwnd)) };
             }
-            // 内容高度要等画完才知道，所以第一帧之后自己改一次尺寸；差 1px 以内不动，避免抖
-            if (height.0 - height.1).abs() > 1 {
+            // 内容高度要等画完才知道，所以这一帧之后再调一次尺寸。
+            // 夹两件事：高度不超过所在屏的工作区（超出的靠滚动看到），以及装不下时把窗口
+            // 往上挪 —— 拖到屏幕下沿外面的 ✕ 和「保存设置」是点不到的
+            let s = draw::scale(hwnd);
+            let wa = unsafe { work_area_of(hwnd) };
+            let mut r = RECT::default();
+            let _ = unsafe { GetWindowRect(hwnd, &mut r) };
+            let room = (wa.bottom - wa.top).max(240) as f32;
+            let want = (height.0 as f32).min(room) as i32;
+            let top = r.top.min(wa.bottom - want).max(wa.top);
+            UI.with(|u| {
+                let mut ui = u.borrow_mut();
+                ui.panel_window_h = want as f32 / s;
+                let over = (ui.panel_layout.height - ui.panel_window_h).max(0.0);
+                ui.scroll = ui.scroll.clamp(0.0, over);
+            });
+            if (want - height.1).abs() > 1 || top != r.top {
                 let _ = SetWindowPos(
                     hwnd,
                     None,
-                    0,
-                    0,
-                    (theme::WIDTH * draw::scale(hwnd)) as i32,
-                    height.0,
-                    SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER,
+                    r.left,
+                    top,
+                    (theme::WIDTH * s) as i32,
+                    want,
+                    SWP_NOACTIVATE | SWP_NOZORDER,
                 );
             }
             LRESULT(0)
@@ -1057,6 +1092,19 @@ unsafe extern "system" fn panel_wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPAR
                 let _ = KillTimer(Some(hwnd), COPYHOLD);
                 let _ = InvalidateRect(Some(hwnd), None, false);
             }
+            LRESULT(0)
+        }
+        WM_MOUSEWHEEL => {
+            // 一格 3 行：会话浏览器一行 36 DIP，三行刚好一屏的三分之一
+            let step = 3.0 * theme::BROWSE_ROW;
+            let dir = ((w.0 >> 16) & 0xFFFF) as i16 as f32 / 120.0;
+            UI.with(|u| {
+                let mut ui = u.borrow_mut();
+                let over =
+                    (ui.panel_layout.height - ui.panel_window_h - theme::PAD_BOTTOM).max(0.0);
+                ui.scroll = (ui.scroll - dir * step).clamp(0.0, over);
+            });
+            let _ = InvalidateRect(Some(hwnd), None, false);
             LRESULT(0)
         }
         WM_COMMAND => {

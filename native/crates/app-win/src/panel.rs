@@ -9,8 +9,9 @@
 
 use windows::Win32::Foundation::{COLORREF, HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
-    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, ReleaseDC,
-    SelectObject, DRAW_TEXT_FORMAT, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, HDC, SRCCOPY,
+    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
+    IntersectClipRect, ReleaseDC, SelectClipRgn, SelectObject, DRAW_TEXT_FORMAT, DT_CENTER,
+    DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, HDC, SRCCOPY,
 };
 use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
@@ -65,6 +66,13 @@ pub struct PanelView {
     pub hover: Option<Id>,
     /// 悬停在哪一行会话上（hover 只带一个名字，行号得另说）
     pub hover_row: Option<usize>,
+    /// 正文向上滚了多少 DIP。窗口高度被工作区夹住时，超出的部分靠它看到 ——
+    /// 会话列表以前硬截在前 5 行，第 6 到 40 条在 Windows 上根本点不到
+    pub scroll: f32,
+    /// 内容总高（DIP），上一次画帧量出来的。用来把滚动条夹在合法范围里
+    pub content: f32,
+    /// 窗口现在多高（DIP）。滚到底 = 内容高 - 窗口高
+    pub window: f32,
     // ---- 设置组（M4d）----
     pub settings_open: bool,
     pub dirty: bool,
@@ -284,7 +292,7 @@ fn browser(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
     let shown = v.browser_rows.len().clamp(1, 5);
     let field = RectF::new(PAD_X, y, WIDTH - 2.0 * PAD_X, BROWSE_ROW * shown as f32);
     p.round(field, R_FIELD, FIELD);
-    for (i, row) in v.browser_rows.iter().take(5).enumerate() {
+    for (i, row) in v.browser_rows.iter().enumerate() {
         let top = y + i as f32 * BROWSE_ROW;
         let r = RectF::new(PAD_X, top, field.width(), BROWSE_ROW);
         if v.browser_sel == Some(i) {
@@ -547,6 +555,13 @@ fn output(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
 
 /* ---------- 入口 ---------- */
 
+impl PanelView {
+    /// 还能往上滚多少。content 是上一帧量出来的总高，window 是窗口现在多高
+    fn scroll_max(&self) -> f32 {
+        (self.content - self.window).max(0.0)
+    }
+}
+
 /// 一帧画完的结果：命中区表 + 内容应有的高度（DIP）
 #[derive(Default)]
 pub struct Layout {
@@ -596,6 +611,10 @@ pub fn paint(hwnd: HWND, v: &PanelView) -> Layout {
 
         let mut y = PAD_TOP;
         y = head(&mut p, v, y) + GAP;
+        // 头部留在原地，正文整体往上平移；裁剪区从头部下沿开始，滚出去的内容不会盖到头部
+        let body_top = (y * s) as i32;
+        IntersectClipRect(mem, 0, body_top, pw, ph);
+        y -= v.scroll.clamp(0.0, v.scroll_max());
         p.line(
             &v.session_line,
             RectF::new(PAD_X, y, WIDTH - 2.0 * PAD_X, LINE_H),
@@ -642,7 +661,10 @@ pub fn paint(hwnd: HWND, v: &PanelView) -> Layout {
         if v.settings_open {
             y = settings_editor(&mut p, v, y);
         }
-        let height = y + PAD_BOTTOM;
+        // 内容高度要还原掉滚动位移再算：不然往下滚一点，"内容"就跟着变矮，
+        // 边界立刻把自己夹回去，滚不动了
+        let height = y + PAD_BOTTOM + v.scroll.clamp(0.0, v.scroll_max());
+        SelectClipRgn(mem, None);
 
         let _ = BitBlt(sdc, 0, 0, pw, ph, Some(mem), 0, 0, SRCCOPY);
         SelectObject(mem, old);
