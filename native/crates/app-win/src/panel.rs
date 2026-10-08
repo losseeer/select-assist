@@ -289,7 +289,10 @@ fn ctx_row(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
 fn browser(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
     const HEAD_W: f32 = 118.0;
     const TIME_W: f32 = 62.0;
-    let shown = v.browser_rows.len().clamp(1, 5);
+    // 盒子按**全部**行定高，一屏装不下的部分交给滚动。
+    // 之前这里写死 5 行而下面的循环画全部行：第 6 条以后既量不进内容高度
+    // （于是 scroll_max 恒为 0，滚不动），又会连命中区一起盖到下面的设置区上。
+    let shown = v.browser_rows.len().max(1);
     let field = RectF::new(PAD_X, y, WIDTH - 2.0 * PAD_X, BROWSE_ROW * shown as f32);
     p.round(field, R_FIELD, FIELD);
     for (i, row) in v.browser_rows.iter().enumerate() {

@@ -137,9 +137,12 @@ public class Input {
 Add-Type -TypeDefinition $src
 
 function Get-ScreenPoint([int]$h, [int]$cx, [int]$cy) {
-    $p = New-Object System.Drawing.Point $cx, $cy
-    if (-not [Input]::TryPoint([IntPtr]$h, $cx, $cy, [ref]$p.x, [ref]$p.y)) { throw "ClientToScreen 失败" }
-    return $p
+    # 不能 [ref] 绑定 $p.X / $p.Y：System.Drawing.Point 的那两个是只读属性，
+    # 这样传 ClientToScreen 会把结果丢掉、原样返回客户区坐标，
+    # 于是 hittest 把客户区当屏幕坐标发出去，到处都报 HTCAPTION。
+    $sx = 0; $sy = 0
+    if (-not [Input]::TryPoint([IntPtr]$h, $cx, $cy, [ref]$sx, [ref]$sy)) { throw "ClientToScreen 失败" }
+    return New-Object System.Drawing.Point $sx, $sy
 }
 function Pack-Client([int]$cx, [int]$cy) {
     # lParam：低 16 位 x、高 16 位 y，客户区坐标
