@@ -21,7 +21,7 @@ use crate::views;
 use capture::{self, ClipNote};
 use ctxpack::adapters::SessionRef;
 use pack::{Pack, Payload};
-use settings::{self, AppSettings, PromptTemplate, SessionPath, Settings, SiteTarget};
+use settings::{self, AppSettings, PromptTemplate, Settings, SiteTarget};
 
 /// Electron 的轮询周期
 const POLL_SECONDS: f64 = 0.8;
