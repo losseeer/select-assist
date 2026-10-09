@@ -1,6 +1,8 @@
 [package]
 name = "select-assist-native"
-version = "0.1.0"
+# 对外版本号的唯一来源：build.sh 把它写进 CFBundleShortVersionString，tag 名也从它拼。
+# 已发布的 Electron 版占了 v0.1.0，原生线走 -native.N 预发布序列。
+version = "0.2.0-native.1"
 edition = "2021"
 publish = false
 

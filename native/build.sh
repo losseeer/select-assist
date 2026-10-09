@@ -27,11 +27,22 @@ mkdir -p "$app/Contents/MacOS"
 cp "target/$profile/select-assist-native" "$app/Contents/MacOS/select-assist-native"
 cp Info.plist "$app/Contents/Info.plist"
 printf 'APPL????' > "$app/Contents/PkgInfo"
+# CFBundleVersion 是构建序号，归 Info.plist 自己管（发一次改一次）；
+# 以前这里也拿 $version 覆盖它，于是 "0.1.0" 被当成 build number 写进去了
 plutil -replace CFBundleShortVersionString -string "$version" "$app/Contents/Info.plist"
-plutil -replace CFBundleVersion -string "$version" "$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 
 codesign --force --sign - "$app"
 codesign --verify --strict "$app"
 
+# 分发产物：ditto 而不是 zip —— zip 不保留 bundle 的扩展属性和符号链接，
+# 解出来的 .app 会丢签名
+arch=$(uname -m)
+name="select-assist-native-mac-$arch-$version"
+zip="dist/$name.zip"
+rm -f "$zip" "$zip.sha256"
+ditto -c -k --keepParent "$app" "$zip"
+shasum -a 256 "$zip" > "$zip.sha256"
+
 printf '%s  %s  v%s  %s\n' "$app" "$profile" "$version" "$(du -sh "$app" | cut -f1)"
+printf '%s  %s  ad-hoc 签名，未公证\n' "$zip" "$(du -sh "$zip" | cut -f1)"

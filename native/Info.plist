@@ -23,6 +23,6 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>select-assist native (experimental branch)</string>
+	<string>select-assist native (Rust + AppKit, prerelease)</string>
 </dict>
 </plist>
