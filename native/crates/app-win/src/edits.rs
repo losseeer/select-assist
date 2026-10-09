@@ -196,11 +196,24 @@ pub fn get(index: usize) -> String {
     }
 }
 
-/// WM_CTLCOLOREDIT 的答复：深色底 + 亮字，画刷是 create() 里建的那一枚
+/// WM_CTLCOLOREDIT 的答复：深色底 + 亮字，画刷是 create() 里建的那一枚。
+/// 画刷不在了就当场按 bg 补一枚再继续用：CreateSolidBrush 偶然失败一次，
+/// 不能变成"这个会话之后每一帧都答 NULL 画刷" —— 那样控件退回系统配色，
+/// 深色底上文字直接看不见，只有选中时才露出来（实测过这个失效形态）。
 pub unsafe fn color_field(hdc: HDC, bg: COLORREF, fg: COLORREF) -> HBRUSH {
     let _ = SetBkColor(hdc, bg);
     let _ = SetTextColor(hdc, fg);
-    BRUSH.with(|b| b.get())
+    BRUSH.with(|b| {
+        let held = b.get();
+        if !held.0.is_null() {
+            return held;
+        }
+        let made = CreateSolidBrush(bg);
+        if !made.0.is_null() {
+            b.set(made);
+        }
+        made
+    })
 }
 
 /// 面板销毁时把画刷也带走，不然每次开合都漏一个 GDI 对象
