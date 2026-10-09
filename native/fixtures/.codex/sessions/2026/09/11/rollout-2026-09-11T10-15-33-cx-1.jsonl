@@ -1,0 +1,8 @@
+{"type":"session_meta","ordinal":0,"payload":{"session_id":"cx-1","cwd":"__HOME__/Dev/prj","originator":"codex-tui"}}
+{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<permissions instructions>SYSTEM PROMPT MUST NOT APPEAR</permissions instructions>"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context><cwd>__HOME__/Dev/prj</cwd></environment_context>"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"这个skill会token用量过高吗？"}]}}
+{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"INTERNAL REASONING MUST NOT APPEAR"}]}}
+{"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"ls"}}
+{"type":"response_item","payload":{"type":"custom_tool_call_output","output":"MUST NOT APPEAR"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"会有，主要瓶颈在检索轮数。"}]}}

@@ -1,0 +1,10 @@
+[package]
+name = "test-support"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# 只做一件事：把 native/fixtures/ 铺成临时 home，并按 TS fixtures.mjs 的结构建 agents.db。
+# 两个 crate 的测试共用它，所以它不属于任何一个 crate。
+[dependencies]
+rusqlite = { version = "0.37", features = ["bundled"] }

@@ -51,8 +51,25 @@ pnpm --filter @select-assist/panel dist   # (optional) package an installer for 
 - `packages/ctxpack` — the `ctxpack/0` data contract, render templates, trimming policy, and per-agent session adapters (library)
 - `packages/panel` — the Electron floating panel (`pnpm --filter @select-assist/panel dist` produces installers)
 - `packages/bridge-ext` — P1 placeholder: a browser extension reading page selections directly
+- `native/` — a Rust + AppKit port of the same product (experimental branch, see below)
 
 Development: `pnpm test` (contract and adapter tests).
+
+## Native build (experimental branch)
+
+`native/` is a Rust + AppKit port of the floating panel, driven milestone by milestone on the `native/rust-mac` branch (plan and acceptance notes: [docs/native-rust-mac.md](docs/native-rust-mac.md)). It is a **parallel second implementation, not a replacement** for the Electron build:
+
+- **Same settings file**: it reads and writes the very same `~/Library/Application Support/select-assist/settings.json` as the Electron build, so window position, site groups, prompt templates, session paths and redaction carry over. ⚠️ Running both at once makes them overwrite each other's file — quit one before switching. The bundle id differs (`dev.select-assist.native`), so they can coexist; the native build has its own single-instance guard.
+- **Behavior parity**: the chip never steals keyboard focus, passthrough mode copies the selection byte-for-byte, transcripts keep only user/assistant text with every omission surfaced. The TypeScript test suite is the behavioral spec for the Rust port, compared verbatim.
+- **Cost**: a 4.5 MB release `.app`, ~22 MB idle memory as measured by `footprint` (the Electron build sits in the hundreds of MB for the same job). macOS 14+ / Apple Silicon.
+
+```bash
+cd native
+./build.sh            # produces dist/select-assist-native.app (ad-hoc signed: right-click → Open on first launch)
+cargo test            # 79 tests, including a verbatim comparison against the TypeScript output
+```
+
+It is not part of any GitHub Release. The three merge-back options and their prerequisites are documented in [docs/native-rust-mac.md §8](docs/native-rust-mac.md).
 
 ## TODO
 

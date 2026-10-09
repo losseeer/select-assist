@@ -1,0 +1,9 @@
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-09-22T09:07:59.904Z","sessionId":"s-1"}
+{"type":"user","sessionId":"s-1","cwd":"__HOME__/Dev/prj","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"<ide_opened_file>The user opened the file X.java.</ide_opened_file>"},{"type":"text","text":"redis预扣库存后消息丢了怎么办？"}]}}
+{"type":"assistant","sessionId":"s-1","cwd":"__HOME__/Dev/prj","isSidechain":false,"message":{"role":"assistant","content":[{"type":"thinking","thinking":"secret internal chain"}]}}
+{"type":"assistant","sessionId":"s-1","cwd":"__HOME__/Dev/prj","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"可以用超时机制回滚。"}]}}
+{"type":"assistant","sessionId":"s-1","cwd":"__HOME__/Dev/prj","isSidechain":false,"message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","id":"t1"}]}}
+{"type":"user","sessionId":"s-1","cwd":"__HOME__/Dev/prj","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"huge file contents"}]}}
+{"type":"assistant","sessionId":"s-1","cwd":"__HOME__/Dev/prj","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"waterfall 监听器必须调用 next()"}]}}
+{"type":"assistant","sessionId":"s-1","cwd":"__HOME__/Dev/prj","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"SUBAGENT TEXT MUST NOT APPEAR"}]}}
+{"type":"user","sessionId":"s-1","cwd":"__HOME__/Dev/prj","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"This session is being continued from a previous conversation. SUMMARY MUST NOT APPEAR"}]}}

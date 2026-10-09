@@ -1,0 +1,5 @@
+{"id":"m1","timestamp":1789649854432,"type":"message","role":"user","cwd":"__HOME__/Dev/prj","content":[{"type":"input_text","text":"<system-reminder data-role=\"user-context\">ENV MUST NOT APPEAR</system-reminder><user_query>这个 JSON 够不够？</user_query>"}]}
+{"id":"r1","type":"reasoning","content":[{"type":"reasoning","text":"PRIVATE MUST NOT APPEAR"}]}
+{"id":"fc1","type":"function_call","name":"read_file"}
+{"id":"fr1","type":"function_call_result","output":"MUST NOT APPEAR"}
+{"id":"m2","type":"message","role":"assistant","status":"completed","cwd":"__HOME__/Dev/prj","content":[{"type":"output_text","text":"我先读一遍实际代码，再判断。"}]}

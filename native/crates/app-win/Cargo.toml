@@ -1,0 +1,40 @@
+[package]
+name = "app-win"
+# 跟着 release 走，不跟逻辑 crate 走：v0.2.0-native.1 那次只升外壳，
+# ctxpack / pack / capture / settings 保持自己的 0.1.0（它们是平台无关逻辑，不单独发）
+version = "0.2.0-native.1"
+edition = "2021"
+publish = false
+
+[[bin]]
+# 不能跟 app-mac 的包名同名：两个 bin 会抢 target/<profile>/select-assist-native，
+# 谁后链谁赢 —— 在 mac 上 app-win 只是个空 main，抢到了就产出一个签名有效的空壳包
+name = "select-assist-native-win"
+path = "src/main.rs"
+
+[dependencies]
+capture = { path = "../capture" }
+ctxpack = { path = "../ctxpack" }
+pack = { path = "../pack" }
+settings = { path = "../settings" }
+
+# 只在 Windows 上取真正用到的 API；mac/Linux 上这个 crate 编成一个空 main，
+# 这样 `cargo test` 在 Mac 上照样全绿，不会多一个编不过的目标。
+# WebView2 曾经在这里试过（复用现成的前端），结论记在 native 线的提交里：
+# runtime 在这台机器上不拉起渲染进程，而且复用前端就等于回到 Chromium 量级，
+# 与 native 线立项的理由相反，所以整条路已经删掉。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_Controls",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_SystemInformation",
+] }

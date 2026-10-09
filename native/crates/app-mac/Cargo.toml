@@ -1,0 +1,80 @@
+[package]
+name = "select-assist-native"
+# 对外版本号的唯一来源：build.sh 把它写进 CFBundleShortVersionString，tag 名也从它拼。
+# 已发布的 Electron 版占了 v0.1.0，原生线走 -native.N 预发布序列。
+version = "0.2.0-native.1"
+edition = "2021"
+publish = false
+
+[dependencies]
+ctxpack = { path = "../ctxpack" }
+pack = { path = "../pack" }
+capture = { path = "../capture" }
+settings = { path = "../settings" }
+serde = { version = "1", features = ["derive"] }
+# 写回共用文件时保持用户的键序
+serde_json = { version = "1", features = ["preserve_order"] }
+dirs = "6"
+objc2 = "0.6"
+block2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+    "std",
+    "block2",
+    "NSAppearance",
+    "NSApplication",
+    "NSBezierPath",
+    "NSBox",
+    "NSButton",
+    "NSButtonCell",
+    "NSCell",
+    "NSClipView",
+    "NSEvent",
+    "NSColor",
+    "NSControl",
+    "NSFont",
+    "NSLayoutManager",
+    "NSGraphics",
+    "NSGraphicsContext",
+    "NSImage",
+    "NSPanel",
+    "NSPasteboard",
+    "NSPopUpButton",
+    "NSPopUpButtonCell",
+    "NSMenu",
+    "NSMenuItem",
+    "NSScreen",
+    "NSSegmentedControl",
+    "NSSegmentedCell",
+    "NSScrollView",
+    "NSSwitch",
+    "NSText",
+    "NSTextContainer",
+    "NSTextView",
+    "NSTextStorage",
+    "NSTextField",
+    "NSTextFieldCell",
+    "NSView",
+    "NSVisualEffectView",
+    "NSWindow",
+    "NSRunningApplication",
+    "NSWorkspace",
+    # 动效曲线：NSAnimationContext.setTimingFunction 的形参是 CAMediaTimingFunction
+    "objc2-quartz-core",
+] }
+objc2-foundation = { version = "0.3", features = [
+    "std",
+    "NSArray",
+    "block2",
+    "NSDate",
+    "NSDateFormatter",
+    "NSNotification",
+    "NSFormatter",
+    "NSRunLoop",
+    "NSTimer",
+    "NSURL",
+    "NSBundle",
+] }
+objc2-quartz-core = "0.3"
+
+[dev-dependencies]
+test-support = { path = "../test-support" }

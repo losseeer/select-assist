@@ -51,8 +51,25 @@ pnpm --filter @select-assist/panel dist   # （可选 ）打包本机安装包�
 - `packages/ctxpack` — `ctxpack/0` 数据契约、渲染模板、截断策略、各 agent 会话适配器（库）
 - `packages/panel` — Electron 悬浮面板（`pnpm --filter panel dist` 出安装包）
 - `packages/bridge-ext` — P1 占位：浏览器扩展直读页面选区
+- `native/` — 同一套产品的 Rust + AppKit 直译（实验分支，见下）
 
 开发：`pnpm test`（契约与适配器测试）。
+
+## 原生版（实验分支）
+
+`native/` 是悬浮面板的 Rust + AppKit 直译，在分支 `native/rust-mac` 上按里程碑推进（方案与验收记录见 [docs/native-rust-mac.md](docs/native-rust-mac.md)）。它是**并行的第二实现，不替换 Electron 版**：
+
+- **共用同一份设置**：读写与 Electron 版同一个 `~/Library/Application Support/select-assist/settings.json`（窗口位置、站点组、提问指令、会话路径、脱敏开关都互通）。⚠️ 两版同时运行会互相覆盖这个文件，切换体验时先退掉另一个。bundle id 不同（`dev.select-assist.native`），所以可以并存；原生版自身有单实例保护。
+- **行为对齐**：chip 永不抢键盘焦点、选区直通逐字节原文、transcript 只收 user/assistant 纯文本且省略项明示；ctxpack 的 TS 用例是 Rust 单测的行为规格，输出逐字比对。
+- **代价**：release `.app` 4.5MB，空闲内存实测约 22MB（`footprint` 口径；Electron 版同用途在数百 MB 量级）。macOS 14+ / Apple Silicon。
+
+```bash
+cd native
+./build.sh            # 出 dist/select-assist-native.app（ad-hoc 签名：首次启动右键 →「打开」）
+cargo test            # 79 项单测（含与 TypeScript 输出的逐字比对）
+```
+
+未纳入 GitHub Release。是否合回 main 的三条路径与前置条件写在 [docs/native-rust-mac.md §8](docs/native-rust-mac.md)。
 
 ## TODO
 
