@@ -815,8 +815,21 @@ fn refresh_context() {
     }
 }
 
-/// 浏览会话：pack::browse 拿一批，列表按 mac 的口径显示「标题 · agent · 时间」
+/// 浏览器开合的纯判据：返回 true 才需要去扫盘。收起时把 browsing 归位，
+/// 所以两条分支走完状态都是对的
+fn toggle_browser(ui: &mut Ui) -> bool {
+    let open = ui.browsing;
+    ui.browsing = false;
+    !open
+}
+
+/// 浏览会话是个开关：展开着再点就收起（mac 的 toggle_browser、Electron 的 ctx-browse
+/// 都是这个语义，这边原来只置 true，一旦展开就只能切模式或重开面板才能收掉）。
+/// 列表按 mac 的口径显示「标题 · agent · 时间」
 fn browse_sessions() {
+    if !UI.with(|u| toggle_browser(&mut u.borrow_mut())) {
+        return;
+    }
     let refs = UI.with(|u| {
         let settings = u.borrow().settings.clone();
         pack::browse(&settings, pack::BROWSE_LIMIT)
@@ -1610,6 +1623,19 @@ mod tests {
             assert!(!u.browsing && u.browser_sel.is_none());
             assert!(u.pack.context.agent.is_none() && u.pack.transcript.is_empty());
             assert!(!apply_mode(u, false), "同一个模式再点一次不该重做任何事");
+        });
+    }
+
+    /// 「浏览会话」是开关：展开着再点要收起来。之前只能置 true，
+    /// 一旦展开就得靠切模式或重开面板才能收掉
+    #[test]
+    fn browse_is_a_toggle_not_just_a_show() {
+        with_ui(|u| {
+            assert!(toggle_browser(u), "关着点 -> 要展开，得去扫盘");
+            assert!(!u.browsing, "展开状态由调用方扫到数据后才置位");
+            u.browsing = true;
+            assert!(!toggle_browser(u), "开着点 -> 收起，不用再扫");
+            assert!(!u.browsing);
         });
     }
 

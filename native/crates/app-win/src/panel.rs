@@ -404,7 +404,19 @@ fn field_box(p: &mut Pen, id: Id, y: f32, h: f32) -> f32 {
 /// （shell.rs 按 rect_of 把子窗口摆过来），所以字段区只画底和标签。
 fn settings_editor(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
     let body_w = WIDTH - 2.0 * PAD_X;
+    // 直通模式只留"目标站 + 保存"：提问指令 / 模板 / 会话路径 / 路径脱敏 都是会话解读的事。
+    // Electron 用 #settings .ctx-only 整块隐藏，mac 的 set_read_mode 把 editor_ctx setHidden，
+    // 这边原来不分模式全画，直通下摆着三个跟当前模式无关的框
+    let y = if v.read_mode {
+        ctx_settings(p, v, y, body_w)
+    } else {
+        y
+    };
+    settings_sites(p, v, y, body_w)
+}
 
+/// 设置组里只属于会话解读的那几行
+fn ctx_settings(p: &mut Pen, v: &PanelView, y: f32, body_w: f32) -> f32 {
     let mut y = label_row(p, body_w, "提问指令", y);
     // 指令条：选择器 + 新建 / 删除 + 「第 i/n 条」
     let pick_w = 120.0;
@@ -486,8 +498,11 @@ fn settings_editor(p: &mut Pen, v: &PanelView, y: f32) -> f32 {
         LEFT,
     );
     p.push("redact", RectF::new(PAD_X, y, body_w, CTRL_H), None);
-    y += CTRL_H + ROW_GAP;
+    y + CTRL_H + ROW_GAP
+}
 
+/// 设置组里两种模式都要的那几行：当前模式的目标站 + 保存
+fn settings_sites(p: &mut Pen, v: &PanelView, y: f32, body_w: f32) -> f32 {
     let mut y = label_row(p, body_w, &v.sites_label, y);
     p.line(
         "每行：名称|URL",
