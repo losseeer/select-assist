@@ -28,7 +28,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNORMAL,
     TPM_BOTTOMALIGN, TPM_LEFTBUTTON, TPM_RETURNCMD, WM_COMMAND, WM_CTLCOLOREDIT, WM_DESTROY,
     WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST, WM_NULL, WM_PAINT, WM_SIZE, WM_TIMER,
-    WNDCLASSEXW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    WNDCLASSEXW, WS_CLIPCHILDREN, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 use crate::clip;
@@ -634,7 +634,12 @@ unsafe fn open_panel(chip: HWND) {
         WS_EX_TOOLWINDOW,
         w!("SelectAssistNativePanel"),
         w!("select-assist"),
-        WS_POPUP,
+        // WS_CLIPCHILDREN 是必须的，不是优化：设置组那三个框是子窗口，和面板共用同一块
+        // 顶层表面。面板每帧都把整个客户区 BitBlt 上去，没有这个位就会把子窗口刚画好的
+        // 文字盖回成自己那块深色底 —— 于是"框里看不见字，选中才露出来，鼠标一移开又没了"
+        // （移开会改 hover、触发面板重画）。PrintWindow 看不见这个 bug，
+        // 因为它对每个子窗口单独发 WM_PRINTCLIENT，等于每次都重画一遍。
+        WS_POPUP | WS_CLIPCHILDREN,
         r.left,
         r.top,
         (theme::WIDTH * s) as i32,
