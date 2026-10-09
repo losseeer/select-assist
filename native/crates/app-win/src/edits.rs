@@ -73,13 +73,16 @@ fn new_edit(panel: HWND) -> HWND {
 /// 建三个 EDIT、换上我们的字体、并关掉视觉样式。
 /// 不关视觉样式的话 EDIT 会自己画白底 —— 我们返回的深色画刷只染文字周围那一圈。
 pub unsafe fn create(panel: HWND, field_bg: COLORREF) {
-    // 看 EDIT 而不是看画刷：面板 WM_DESTROY 把两者一起放掉了，只重建一半的话
+    // 画刷要先保证，不能被 EDIT 的守卫挡在后面：EDITS 非空但画刷是 null 的时候
+    // （面板 WM_DESTROY 把两者一起放掉，而这条路上只有画刷需要重建）直接 return
+    // 会让 WM_CTLCOLOREDIT 一直答一个 NULL 画刷出去，控件退回系统默认配色
+    if BRUSH.with(|b| b.get().0.is_null()) {
+        BRUSH.with(|b| b.set(CreateSolidBrush(field_bg)));
+    }
+    // 看 EDIT 而不是只看画刷：面板 WM_DESTROY 把两者一起放掉了，只重建一半的话
     // "重开面板 -> 设置组是空的"，要点两次设置才出来
     if !EDITS.with(|e| e.borrow()[0].0.is_null()) {
         return;
-    }
-    if BRUSH.with(|b| b.get().0.is_null()) {
-        BRUSH.with(|b| b.set(CreateSolidBrush(field_bg)));
     }
     let edits = [new_edit(panel), new_edit(panel), new_edit(panel)];
     for h in edits {
