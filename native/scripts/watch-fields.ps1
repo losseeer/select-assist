@@ -32,7 +32,22 @@ public class Watch {
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
     public static extern IntPtr Send(IntPtr h, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out int p);
+    [DllImport("user32.dll")] public static extern bool GetScrollInfo(IntPtr h, int bar, ref SI si);
     public const uint WM_GETFONT = 0x0031, WM_GETTEXTLENGTH = 0x000E;
+
+    /// 滚动条状态。"有字但看不见"有两种可能：颜色答错了，或者控件滚到了没有字的地方 ——
+    /// 后者同样会"一选中就露出来"（Ctrl+A 把视图拉回开头），光看亮像素分不开，所以要一起量
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SI { public uint cbSize; public uint fMask; public int nMin, nMax; public uint nPage; public int nPos, nTrackPos; }
+
+    /// SB_VERT=1，SIF_ALL=0x17。拿不到（控件不需要滚动条）时返回 false
+    public static string VScroll(IntPtr h) {
+        SI si = new SI();
+        si.cbSize = (uint)Marshal.SizeOf(typeof(SI));
+        si.fMask = 0x17;
+        if (!GetScrollInfo(h, 1, ref si)) return "scroll=n/a";
+        return "scroll=" + si.nPos + "/" + si.nMax + " page=" + si.nPage;
+    }
 }
 '@
 
@@ -90,7 +105,8 @@ while ($true) {
                 $bmp.Dispose()
             } catch { $bright = -1 }   # 锁屏 / 区域不可见，跳过这一轮
         }
-        $line = "Edit #$n len=$len font=0x$($font.ToInt64().ToString('x')) visible=$vis size=${w}x${h} bright=$bright"
+        $line = "Edit #$n len=$len font=0x$($font.ToInt64().ToString('x')) visible=$vis size=${w}x${h} " +
+            [Watch]::VScroll($cur) + " bright=$bright"
         $report += $line
         if ($len -gt 0 -and $bright -ge 0 -and $bright -lt 20) {
             $caught = @{ index = $n; line = $line; rect = $r }
