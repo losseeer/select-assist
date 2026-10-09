@@ -1,6 +1,8 @@
 [package]
 name = "app-win"
-version = "0.1.0"
+# 跟着 release 走，不跟逻辑 crate 走：v0.2.0-native.1 那次只升外壳，
+# ctxpack / pack / capture / settings 保持自己的 0.1.0（它们是平台无关逻辑，不单独发）
+version = "0.2.0-native.1"
 edition = "2021"
 publish = false
 
