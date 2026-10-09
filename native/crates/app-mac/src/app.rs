@@ -1021,8 +1021,3 @@ fn joined(rows: &[usize]) -> String {
         .collect::<Vec<_>>()
         .join("、")
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-}

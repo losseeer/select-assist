@@ -464,7 +464,7 @@ dependencies = [
 
 [[package]]
 name = "select-assist-native"
-version = "0.1.0"
+version = "0.2.0-native.1"
 dependencies = [
  "block2",
  "capture",
